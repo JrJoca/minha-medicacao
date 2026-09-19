@@ -73,6 +73,7 @@ type Routine = {
   currentDay: number;
   totalDays: number | null;
   taken: boolean;
+  takenAt: string | null;
   paused: boolean;
 };
 
@@ -131,6 +132,12 @@ export default function Home() {
   const [notice, setNotice] = useState(
     "A próxima rotina está programada para 19:00.",
   );
+  const isViewer = user?.app_metadata?.role === "viewer";
+  const viewerMutationBlocked = () => {
+    if (!isViewer) return false;
+    setNotice("Perfil visualizador: alterações não são permitidas.");
+    return true;
+  };
   const active = routines.filter((r) => !r.paused);
   const done = active.filter((r) => r.taken).length;
   const progress = active.length ? Math.round((done / active.length) * 100) : 0;
@@ -190,7 +197,7 @@ export default function Home() {
         supabase.from("routine_medications").select("routine_id,medication_id"),
         supabase
           .from("medication_intakes")
-          .select("routine_id")
+          .select("routine_id,taken_at")
           .gte("taken_at", startOfDay.toISOString()),
       ]);
     const error =
@@ -212,9 +219,7 @@ export default function Home() {
       })),
     );
     const links = linkResult.data || [];
-    const takenIds = new Set(
-      (intakeResult.data || []).map((i) => i.routine_id),
-    );
+    const todayIntakes = intakeResult.data || [];
     setRoutines(
       (routineResult.data || []).map((r) => ({
         id: r.id,
@@ -230,7 +235,9 @@ export default function Home() {
         noEndDate: r.has_no_end_date,
         currentDay: r.current_day,
         totalDays: r.total_days,
-        taken: takenIds.has(r.id),
+        taken: todayIntakes.some((i) => i.routine_id === r.id),
+        takenAt:
+          todayIntakes.find((i) => i.routine_id === r.id)?.taken_at || null,
         paused: r.status === "paused",
       })),
     );
@@ -331,6 +338,7 @@ export default function Home() {
     date: string,
     intake?: Intake,
   ) {
+    if (viewerMutationBlocked()) return;
     if (!user) return;
     const now = new Date();
     const currentTime = [
@@ -364,6 +372,7 @@ export default function Home() {
   }
 
   async function saveReportRecord(routine: Routine, intake?: Intake) {
+    if (viewerMutationBlocked()) return;
     if (!user || !correctedDate || !correctedTime) return;
     const correctedAt = new Date(`${correctedDate}T${correctedTime}:00`);
     const targetStart = new Date(`${correctedDate}T00:00:00`);
@@ -414,6 +423,7 @@ export default function Home() {
     date: string,
     editKey: string,
   ) {
+    if (viewerMutationBlocked()) return;
     setEditingReportRoutineId(editKey);
     setCorrectedDate(
       intake ? localDateKey(new Date(intake.taken_at)) : date,
@@ -435,7 +445,11 @@ export default function Home() {
     e.preventDefault();
     setAuthNotice("");
     const d = new FormData(e.currentTarget);
-    const email = String(d.get("email"));
+    const login = String(d.get("email")).trim();
+    const email =
+      mode === "login" && login.toLowerCase() === "visualizador"
+        ? "visualizador@minha-medicacao.local"
+        : login;
     const password = String(d.get("password"));
     const result =
       mode === "login"
@@ -454,6 +468,7 @@ export default function Home() {
 
   async function addMedicine(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (viewerMutationBlocked()) return;
     const d = new FormData(e.currentTarget);
     if (!user) return;
     const payload = {
@@ -551,6 +566,7 @@ export default function Home() {
   }
 
   async function savePrescriptionMedicines() {
+    if (viewerMutationBlocked()) return;
     if (!user || bulkSaving) return;
     const validDrafts = prescriptionDrafts.filter(
       (item) => item.name.trim() && item.dosage.trim(),
@@ -595,6 +611,7 @@ export default function Home() {
     );
   }
   function openNewRoutine() {
+    if (viewerMutationBlocked()) return;
     setEditingRoutine(null);
     setSelected([]);
     setMedicineToAdd("");
@@ -602,6 +619,7 @@ export default function Home() {
     setRoutineOpen(true);
   }
   function openEditRoutine(routine: Routine) {
+    if (viewerMutationBlocked()) return;
     setEditingRoutine(routine);
     setSelected([...routine.medicineIds]);
     setMedicineToAdd("");
@@ -610,6 +628,7 @@ export default function Home() {
   }
   async function saveRoutine(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (viewerMutationBlocked()) return;
     const d = new FormData(e.currentTarget);
     const name = String(d.get("routineName"));
     if (!user) return;
@@ -734,6 +753,7 @@ export default function Home() {
         currentDay: 1,
         totalDays,
         taken: false,
+        takenAt: null,
         paused: false,
       },
     ]);
@@ -745,17 +765,21 @@ export default function Home() {
     setNotice("A rotina " + name + " foi criada.");
   }
   function addSelectedMedicine() {
+    if (viewerMutationBlocked()) return;
     const id = medicineToAdd;
     if (!id || selected.includes(id)) return;
     setSelected((list) => [...list, id]);
     setMedicineToAdd("");
   }
   function removeSelectedMedicine(id: string) {
+    if (viewerMutationBlocked()) return;
     setSelected((list) => list.filter((item) => item !== id));
   }
   async function toggleTaken(id: string) {
+    if (viewerMutationBlocked()) return;
     const routine = routines.find((r) => r.id === id);
     if (!routine || !user) return;
+    let registeredAt: string | null = null;
     if (routine.taken) {
       const start = new Date();
       start.setHours(0, 0, 0, 0);
@@ -769,16 +793,23 @@ export default function Home() {
         return;
       }
     } else {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("medication_intakes")
-        .insert({ user_id: user.id, routine_id: id });
+        .insert({ user_id: user.id, routine_id: id })
+        .select("taken_at")
+        .single();
       if (error) {
         setNotice("Erro ao registrar conclusão: " + error.message);
         return;
       }
+      registeredAt = data.taken_at;
     }
     setRoutines((list) =>
-      list.map((r) => (r.id === id ? { ...r, taken: !r.taken } : r)),
+      list.map((r) =>
+        r.id === id
+          ? { ...r, taken: !r.taken, takenAt: registeredAt }
+          : r,
+      ),
     );
     setNotice(
       routine?.taken
@@ -788,6 +819,7 @@ export default function Home() {
   }
   function saveWhatsAppSettings(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (viewerMutationBlocked()) return;
     const d = new FormData(e.currentTarget);
     const phone = String(d.get("whatsAppPhone") || "").replace(/\D/g, "");
     setWhatsAppPhone(phone);
@@ -800,16 +832,25 @@ export default function Home() {
     setNotice("Número do WhatsApp salvo neste dispositivo.");
   }
   function sendWhatsApp(routine: Routine) {
+    if (viewerMutationBlocked()) return;
     if (!whatsAppPhone) {
       setWhatsAppOpen(true);
       setNotice("Cadastre o número que receberá a confirmação.");
       return;
     }
     const names = medicineNames(routine.medicineIds);
+    if (!routine.takenAt) {
+      setNotice("Não foi possível localizar o horário registrado da rotina.");
+      return;
+    }
+    const registeredTime = new Date(routine.takenAt).toLocaleTimeString(
+      "pt-BR",
+      { hour: "2-digit", minute: "2-digit" },
+    );
     const lines = [
       "Rotina concluída ✅",
       `Rotina: ${routine.name}`,
-      `Horário registrado: ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+      `Horário registrado: ${registeredTime}`,
       routine.noEndDate
         ? "Rotina contínua — sem data para terminar"
         : `Dia ${routine.currentDay} de ${routine.totalDays}`,
@@ -823,6 +864,7 @@ export default function Home() {
     );
   }
   async function togglePause(id: string) {
+    if (viewerMutationBlocked()) return;
     const routine = routines.find((r) => r.id === id);
     if (!routine) return;
     const paused = !routine.paused;
@@ -842,6 +884,7 @@ export default function Home() {
     );
   }
   async function remove(id: string) {
+    if (viewerMutationBlocked()) return;
     const { error } = await supabase
       .from("medication_routines")
       .delete()
@@ -897,9 +940,11 @@ export default function Home() {
             >
               <Field
                 id="email"
-                label="E-mail"
-                type="email"
-                placeholder="seu@email.com"
+                label={authMode === "login" ? "Usuário ou e-mail" : "E-mail"}
+                type={authMode === "login" ? "text" : "email"}
+                placeholder={
+                  authMode === "login" ? "Seu usuário ou e-mail" : "seu@email.com"
+                }
               />
               <Field
                 id="password"
@@ -963,6 +1008,8 @@ export default function Home() {
               <DialogTrigger asChild>
                 <Button
                   variant="outline"
+                  disabled={isViewer}
+                  title={isViewer ? "Disponível apenas para edição" : undefined}
                   className="h-11 min-w-0 rounded-xl bg-white px-3"
                 >
                   <MessageCircle /> WhatsApp
@@ -1117,6 +1164,7 @@ export default function Home() {
                                 type="button"
                                 variant="ghost"
                                 size="sm"
+                                disabled={isViewer}
                                 onClick={() => {
                                   setEditingReportRoutineId(routine.id);
                                   setCorrectedDate(
@@ -1615,6 +1663,8 @@ export default function Home() {
               <DialogTrigger asChild>
                 <Button
                   variant="outline"
+                  disabled={isViewer}
+                  title={isViewer ? "Perfil somente leitura" : undefined}
                   className="h-11 min-w-0 rounded-xl bg-white px-3"
                 >
                   <Pill /> Medicamento
@@ -1924,6 +1974,8 @@ export default function Home() {
               <DialogTrigger asChild>
                 <Button
                   onClick={openNewRoutine}
+                  disabled={isViewer}
+                  title={isViewer ? "Perfil somente leitura" : undefined}
                   className="col-span-2 h-11 rounded-xl bg-blue-600 hover:bg-blue-700 sm:col-span-1"
                 >
                   <Plus /> Nova rotina
@@ -2115,6 +2167,12 @@ export default function Home() {
         </div>
       </header>
       <div className="mx-auto max-w-6xl px-4 py-7 sm:px-6 lg:px-8">
+        {isViewer && (
+          <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
+            Acesso como visualizador: todos os dados podem ser consultados, mas
+            nenhuma alteração é permitida.
+          </div>
+        )}
         <section className="mb-7">
           <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
             <CalendarDays className="size-4" /> TERÇA-FEIRA, 15 DE SETEMBRO
@@ -2155,6 +2213,51 @@ export default function Home() {
             note={medicines.length + " medicamentos cadastrados"}
           />
         </section>
+        <section className="mb-8">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold">Medicamentos cadastrados</h2>
+            <p className="text-sm text-slate-500">
+              Lista completa de medicamentos e respectivas dosagens.
+            </p>
+          </div>
+          {medicines.length === 0 ? (
+            <Card className="rounded-3xl border-dashed border-slate-300 bg-white">
+              <CardContent className="p-6 text-sm text-slate-500">
+                Nenhum medicamento cadastrado.
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {medicines.map((medicine) => (
+                <Card key={medicine.id} className="rounded-2xl bg-white">
+                  <CardContent className="flex items-start gap-3 p-4">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700">
+                      <Pill className="size-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="break-words font-extrabold text-slate-900">
+                        {medicine.name}
+                      </h3>
+                      <p className="mt-1 break-words text-sm text-slate-600">
+                        {medicine.dosage}
+                      </p>
+                      {medicine.link && (
+                        <a
+                          href={medicine.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 block break-all text-sm font-semibold text-blue-700 hover:underline"
+                        >
+                          Ver referência
+                        </a>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </section>
         <div className="mb-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div>
             <h2 className="text-xl font-bold">Rotinas de hoje</h2>
@@ -2185,6 +2288,7 @@ export default function Home() {
                 </div>
                 <Button
                   onClick={() => setMedicineOpen(true)}
+                  disabled={isViewer}
                   variant="outline"
                   className="mt-2 rounded-xl"
                 >
@@ -2235,6 +2339,7 @@ export default function Home() {
                     {r.taken && !r.paused && (
                       <Button
                         onClick={() => sendWhatsApp(r)}
+                        disabled={isViewer}
                         className="h-11 w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 sm:w-auto"
                       >
                         <MessageCircle />
@@ -2244,6 +2349,7 @@ export default function Home() {
                     {!r.paused && (
                       <Button
                         onClick={() => toggleTaken(r.id)}
+                        disabled={isViewer}
                         variant={r.taken ? "outline" : "default"}
                         className={
                           "h-11 w-full rounded-xl sm:w-auto " +
@@ -2265,7 +2371,16 @@ export default function Home() {
                     )}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={isViewer}
+                          aria-label={
+                            isViewer
+                              ? "Ações indisponíveis no modo visualizador"
+                              : "Ações da rotina"
+                          }
+                        >
                           <MoreVertical />
                         </Button>
                       </DropdownMenuTrigger>
@@ -2309,7 +2424,7 @@ export default function Home() {
           {notice}
         </output>
         <p className="mt-7 text-center text-xs text-slate-400">
-          Versão de teste com dados demonstrativos.
+          Início da utilização do sistema no dia 21 de Setembro de 2026
         </p>
       </div>
     </main>
