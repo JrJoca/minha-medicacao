@@ -132,16 +132,31 @@ export default function Home() {
   const [notice, setNotice] = useState(
     "A próxima rotina está programada para 19:00.",
   );
+  const [currentTimeInMinutes, setCurrentTimeInMinutes] = useState(() => {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  });
   const isViewer = user?.app_metadata?.role === "viewer";
   const viewerMutationBlocked = () => {
     if (!isViewer) return false;
     setNotice("Perfil visualizador: alterações não são permitidas.");
     return true;
   };
-  const active = routines.filter((r) => !r.paused);
+  const routinesByTime = useMemo(
+    () =>
+      [...routines].sort(
+        (first, second) =>
+          timeToMinutes(first.time) - timeToMinutes(second.time),
+      ),
+    [routines],
+  );
+  const active = routinesByTime.filter((r) => !r.paused);
   const done = active.filter((r) => r.taken).length;
   const progress = active.length ? Math.round((done / active.length) * 100) : 0;
-  const next = useMemo(() => active.find((r) => !r.taken), [active]);
+  const next = active.find(
+    (routine) =>
+      !routine.taken && timeToMinutes(routine.time) >= currentTimeInMinutes,
+  );
   const medicineNames = (ids: string[]) =>
     ids.map((id) => medicines.find((m) => m.id === id)?.name).filter(Boolean);
   const reportIsToday = reportDate === localDateKey(new Date());
@@ -268,6 +283,15 @@ export default function Home() {
     setIncludeMedicineNames(
       localStorage.getItem("medication-whatsapp-medicines") !== "false",
     );
+  }, []);
+
+  useEffect(() => {
+    const updateCurrentTime = () => {
+      const now = new Date();
+      setCurrentTimeInMinutes(now.getHours() * 60 + now.getMinutes());
+    };
+    const intervalId = window.setInterval(updateCurrentTime, 30_000);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   useEffect(
@@ -2297,7 +2321,7 @@ export default function Home() {
               </CardContent>
             </Card>
           )}
-          {routines.map((r) => (
+          {routinesByTime.map((r) => (
             <Card
               key={r.id}
               className={
@@ -2470,6 +2494,13 @@ function localDateKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function timeToMinutes(time: string) {
+  const [hours = 0, minutes = 0] = time
+    .split(":")
+    .map((value) => Number(value));
+  return hours * 60 + minutes;
 }
 
 function dateKeysBetween(startKey: string, endKey: string) {
