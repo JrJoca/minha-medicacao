@@ -1,0 +1,61 @@
+{
+  "prepared_at": "2026-10-19",
+  "timezone": "America/Sao_Paulo",
+  "purpose": "Continuidade no Codex; sem deploy, sem dados pessoais, sem mudança de schema",
+  "github": {
+    "repository": "JrJoca/minha-medicacao",
+    "default_branch": "master",
+    "base_commit": "fca5b13d6b317182d64b0a97eb7f75e94670d1b6",
+    "base_tree": "9a3a2ac5ccd3fd56f963f35a41fe574ae491b980"
+  },
+  "vercel": {
+    "project_id": "prj_XFY7dqcewfTAGS15dA2NOW1pqmUl",
+    "team_id": "team_lYHzWAHLsWNRltOCmuCUiYa4",
+    "deployment_id": "dpl_87Pi2NFXYHwQYQQgFbAzu6b6BFnh",
+    "state": "READY",
+    "target": "production",
+    "url": "https://minha-medicacao.vercel.app",
+    "commit": "fca5b13d6b317182d64b0a97eb7f75e94670d1b6",
+    "http_status_observed": 200
+  },
+  "sites": {
+    "project_id": "appgprj_6aa9ddfe81808191938005fa58d26cf9",
+    "latest_saved_version": 16,
+    "source_commit": "a1f3b9012eeec53cdc8cbbc7bdffe37089276032",
+    "url": "https://controle-medicacao-joaquim.joaquimkurama.chatgpt.site",
+    "source_archive_compared": false
+  },
+  "supabase": {
+    "project_ref": "llftfgtswvmwtbmkegpd",
+    "endpoint": "https://llftfgtswvmwtbmkegpd.supabase.co",
+    "domain_tables": [
+      "medications",
+      "medication_routines",
+      "routine_medications",
+      "medication_intakes"
+    ],
+    "rls_enabled": true,
+    "shared_unrelated_table_do_not_modify": "links",
+    "listed_migrations": [
+      {
+        "version": "20260908183505",
+        "name": "create_user_links"
+      },
+      {
+        "version": "20260918180420",
+        "name": "viewer_read_only_scoped"
+      }
+    ],
+    "security_warning": "auth_leaked_password_protection"
+  },
+  "verification": {
+    "metadata": true,
+    "schema_and_policies": true,
+    "local_build": false,
+    "lint": false,
+    "typescript": false,
+    "e2e": false,
+    "apk": false,
+    "reason": "Ambiente de execução indisponível"
+  }
+}

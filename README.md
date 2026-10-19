@@ -118,3 +118,9 @@ O sistema monta uma mensagem com os dados da rotina e abre o WhatsApp. O envio n
 ## Observação
 
 Este sistema auxilia na organização pessoal das rotinas de medicação. Ele não substitui receita, orientação médica ou acompanhamento profissional.
+
+## Continuidade no Codex
+
+A preparação de migração e a memória técnica estão em [docs/CODEX_HANDOFF.md](docs/CODEX_HANDOFF.md). Leia também [AGENTS.md](AGENTS.md), [base de produção](docs/PRODUCAO.md), [regras do sistema](docs/REGRAS_DO_SISTEMA.md), [banco e acesso](docs/BANCO_E_ACESSO.md), [guia de execução/migração](docs/EXECUCAO_E_MIGRACAO.md) e [pendências](docs/PENDENCIAS_E_SEGURANCA.md).
+
+A base já possui dados reais no Supabase. Não execute novamente a migração inicial em produção: a orientação de criação de tabelas acima serve somente para um ambiente novo e isolado, após revisar o histórico e as políticas do visualizador. O cadastro de medicamentos e rotinas atual usa o cliente Supabase diretamente; PHP é opcional. Há limitações conhecidas em frequência, contador e reconstrução do histórico, detalhadas na documentação de continuidade.
