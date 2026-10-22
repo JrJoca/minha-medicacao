@@ -53,10 +53,10 @@ O navegador headless usou requisições HTTPS encaminhadas pelo Playwright com p
 
 ## Acompanhamento após o corte
 
-1. As pessoas entram pelo domínio público com as novas senhas para confirmar suas sessões e dados; a checagem administrativa dos vínculos já passou. Não enviar senhas/códigos no chat.
+1. Concluído: o usuário confirmou acesso, dados e permissões das duas contas na produção; a checagem administrativa dos vínculos também passou.
 2. Preservar os backups privados locais e remotos, o Supabase bloqueado e o deployment anterior durante a observação. A recuperação do arquivo remoto já foi conferida.
 3. Depois de novas escritas no Neon, rollback do frontend sozinho não reconcilia dados; exportar e preservar os deltas antes de qualquer retorno.
-4. Gerar e validar a atualização do APK, sua origem no Neon Auth e as notificações em dispositivo; usar a versão web até isso. SDK Android/PHP não estão instalados neste ambiente, portanto APK/notificações e integração PHP seguem sem validação real.
+4. Como última etapa após as funcionalidades web: gerar e validar a atualização do APK, sua origem no Neon Auth e as notificações em dispositivo; usar a versão web até isso. SDK Android/PHP não estão instalados neste ambiente, portanto APK/notificações e integração PHP seguem sem validação real.
 5. Após estabilizar a migração, implementar as features de estoque na ordem de `PLANO_ESTOQUE.md`.
 
 ## Arquivos para revisão

@@ -6,7 +6,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test:migration": "node --test tests/neon-migration.test.mjs tests/neon-deployment.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test:migration": "node --test tests/neon-migration.test.mjs tests/neon-deployment.test.mjs tests/neon-stock.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py'",
     "install:ci": "bash scripts/install-pnpm.sh",
     "dev": "node scripts/run-framework.mjs dev",
     "build": "node scripts/run-framework.mjs build",

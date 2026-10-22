@@ -4,16 +4,18 @@
 
 Os dois PDFs foram consolidados para preservar os fluxos atuais e implementar
 estoque em etapas. O usuário cancelou Agiflow e priorizou a substituição completa
-do Supabase por Neon, incluindo Auth e API. A migração foi implementada em branch
-local e validada em ensaio; a produção não foi alterada. Estoque ainda não foi
-implementado. O estado técnico atualizado está em `VALIDACAO_NEON.md`.
+do Supabase por Neon, incluindo Auth e API. A migração foi publicada e o usuário
+confirmou a validação das duas contas. A ampliação inicial de estoque contempla
+total de comprimidos, comprimidos por caixa e consumo diário, mantendo o cadastro
+atual. Detalhes: `ESTOQUE_BASE.md`, `CORTE_NEON.md` e `VALIDACAO_NEON.md`.
+Android foi movido para a última etapa, conforme orientação do usuário.
 
 ## Fontes conferidas
 
 - `Controle_Medicacao_Codex_Handoff_Consolidado_2026-10-19.pdf`, 27 páginas: continuidade, estado atual, riscos, regressão e estoque.
 - `Controle_Medicacao_Documentacao_Completa_para_Codex_2026-10-19.pdf`, 16 páginas: domínio de estoque, operações, telas e critérios de aceite.
 - Repositório: https://github.com/JrJoca/minha-medicacao .
-- `master` remota e checkout: `fca5b13d6b317182d64b0a97eb7f75e94670d1b6`.
+- Base original conferida antes da migração: `fca5b13d6b317182d64b0a97eb7f75e94670d1b6`.
 - Branch documental consultada sem trocar o checkout: `docs/preparacao-codex-2026-10-19`, commit `0d13721f165129d188a30c72868c702d9a3debe0`.
 - Lidos AGENTS.md, docs/CODEX_HANDOFF.md e os documentos de produção, regras, arquitetura, banco, execução, testes e pendências dessa branch.
 - A diferença dessa branch para master contém documentação, sem alteração de código executável.
@@ -24,18 +26,21 @@ As instruções operacionais nos PDFs foram tratadas como contexto de especifica
 
 Produção informada pelos PDFs, README e documentação GitHub: https://minha-medicacao.vercel.app .
 
-No levantamento inicial, o acesso HTTPS ao domínio de produção e ao host Supabase retornou `Tunnel connection failed: 403 Forbidden` pelo proxy. Esse resultado inicial não demonstrava falha da aplicação. O acesso administrativo ao Supabase e aos serviços Neon foi liberado e validado posteriormente; o link Vercel não representa um deploy desta alteração. O endereço é o informado nas fontes, sem alegação de deployment recém-publicado. A versão do Sites é distinta da base GitHub/Vercel.
+A aplicação web foi publicada com Neon. O Supabase permanece preservado para
+recuperação, com escritas bloqueadas nas quatro tabelas migradas. As duas contas
+e seus dados/permissões foram validados pelo usuário. A versão do Sites é distinta
+da base GitHub/Vercel.
 
 ## Sequência de implementação
 
 | Ordem | To do / feature | O que fará | Condição de conclusão |
 |---|---|---|---|
 | 1 | [x] Linha de base e correções necessárias | Registrar comportamento atual, corrigir erros preexistentes de lint/tipos e estabelecer verificações de regressão antes de integrar estoque. Trabalhar em branch local própria. | Falhas anteriores identificadas separadamente; nenhum fluxo atual removido. |
-| 2 | [ ] Concluir a transição completa para Neon | Cliente, banco, Auth e API implementados e testados em ensaio; duas contas e seus vínculos preservados. Falta ativar as contas com novas senhas, preparar backup durável e corte atualizado, revisar e autorizar produção. | Isolamento/RLS e login passaram com fixtures; corte e regressão das duas contas reais precisam ser concluídos antes do estoque. |
-| 3 | [ ] Esquema normalizado e migração aditiva | Preservar as quatro tabelas atuais e acrescentar compras, movimentos de estoque, itens consumidos/snapshots, dose estruturada, identificação da ocorrência e marco de ativação. | Migração versionada ensaiada; dados, IDs e vínculos anteriores preservados. |
-| 4 | [ ] Permissões do estoque | Aplicar RLS e validações de RPC: proprietário altera, viewer vinculado só consulta, outros usuários/anônimos não acessam. | Testes de acesso direto ao banco/RPC e isolamento entre usuários passam. |
+| 2 | [x] Concluir a transição completa para Neon | Cliente, banco, Auth e API publicados; duas contas vinculadas, backups e dados preservados. | Corte concluído; usuário confirmou acesso, dados e permissões das duas contas. |
+| 3 | [ ] Base inicial de estoque no banco | Acrescentar tabela separada com total, comprimidos por caixa, consumo diário e duração calculada; 10 / 2 = 5 dias. Cadastro e registros atuais preservados. | SQL/testes e ensaio concluídos; aplicação autorizada no destino final registrada em ESTOQUE_BASE.md. Compras e movimentos continuam nas próximas etapas. |
+| 4 | [ ] Permissões da base de estoque | Proprietário altera, viewer vinculado só consulta, outros usuários/anônimos não acessam. | Quatro políticas RLS e RPC com SECURITY INVOKER verificadas no ensaio e no destino final. Estender a proteção às futuras tabelas de movimentos. |
 | 5 | [ ] Configuração dos medicamentos legados | Exibir “Estoque não informado”, solicitar saldo físico atual e dose explícita, conservar textos e históricos. Criar lista de pendências de normalização. | Ausência de informação não vira zero; nenhuma baixa retroativa ou dose inferida. |
-| 6 | [ ] Cadastro com estoque em duas etapas | Manter nome, dosagem/orientações e link; adicionar caixas × comprimidos por caixa, total automático e resumo. | 2 caixas de 30 geram 60 unidades com persistência consistente. |
+| 6 | [ ] Configuração de estoque em fluxo separado | Preservar o cadastro atual do medicamento. Criar posteriormente fluxo para informar saldo físico, comprimidos por caixa e consumo diário. | Configuração explícita sem alterar o formulário atual; cálculo reproduz 10 / 2 = 5 dias. |
 | 7 | [ ] Compras, reposições e ajustes | Acrescentar entradas ao mesmo medicamento e permitir conciliação com origem/motivo e data auditáveis. | Saldo deriva de movimentos; retry não repete compra; histórico não é sobrescrito. |
 | 8 | [ ] Quantidade por medicamento na rotina | Informar comprimidos por tomada em cada vínculo; permitir doses diferentes numa rotina com vários medicamentos. | Quantidade positiva explícita; alteração futura não reescreve consumos antigos. |
 | 9 | [ ] Agenda estruturada e ocorrências | Representar frequência calculável, horários, duração/fim e pausas, separando data local da ocorrência de taken_at. Manter frequência textual antiga enquanto não configurada. | Recorrência e fuso têm regras documentadas; sem ocorrências ou faltas inventadas. |
@@ -44,9 +49,10 @@ No levantamento inicial, o acesso HTTPS ao domínio de produção e ao host Supa
 | 12 | [ ] Histórico preservado e arquivamento | Manter o retrato do medicamento/dose/quantidade na tomada e proteger fatos históricos de exclusões em cascata. | Editar ou arquivar rotina não apaga histórico contábil nem altera snapshots passados. |
 | 13 | [ ] Previsão de término | Simular próximas ocorrências de todas as rotinas do medicamento, respeitando saldo, doses já confirmadas, horários, pausas e fim. | Exibe última dose integralmente coberta e primeira ocorrência com falta; explica casos sem previsão. |
 | 14 | [ ] Painel/lista de estoque | Mostrar medicamentos, saldo, movimentações, consumo e datas previstas; ações de configurar estoque e repor; feedback após confirmação/estorno. | Uso mobile acessível; estados de desconhecido, zero, divergência e sem consumo distintos. |
-| 15 | [ ] Integrações e regressão | Integrar relatório/histórico, manter OCR revisável, WhatsApp com horário persistido e envio manual, ordenação/próxima rotina e Capacitor/notificações. | Fluxos existentes verificados; OCR não inventa estoque; Android validado quando houver SDK/dispositivo. |
+| 15 | [ ] Integrações e regressão web | Integrar relatório/histórico, manter OCR revisável, WhatsApp com horário persistido e envio manual e ordenação/próxima rotina. | Fluxos web existentes verificados; OCR não inventa estoque. Android fica na última etapa. |
 | 16 | [ ] Testes e apresentação das alterações | Executar testes de cálculo, RPC/RLS, concorrência, migração e interface; entregar diff, SQL, resultados e procedimento de implantação/compensação. | Evidência real, pendências explícitas e revisão antes de produção. |
 | 17 | [ ] Implantação controlada, após revisão | Fazer backup privado e verificar restauração; aplicar mudanças compatíveis, publicar versão aprovada e validar o resultado. | Autorização explícita para produção, SHA conferido e smoke seguro; sem escrita de testes em dados reais. |
+| 18 | [ ] Android — última etapa | Atualizar o APK com todas as funcionalidades web concluídas, origem no Neon Auth e notificações. | APK gerado e validado em dispositivo após as entregas anteriores. |
 
 ## Como preservar os dados existentes e normalizá-los no Neon
 
@@ -78,7 +84,11 @@ Login/cadastro/logout e sessão; perfil visualizador; medicamentos e links; sele
 
 ## Validação e critérios de aceite
 
-Resultados iniciais de onboarding abaixo foram superados pela migração: atualmente 33 testes passam, TypeScript/lint/build passam (lint com um aviso de imagem), e Auth/Data API e navegador foram validados com fixtures Neon. APK e entrega real de OTP continuam pendentes. O histórico inicial fica registrado para comparação:
+Resultados iniciais de onboarding abaixo foram superados: 69 testes passam após
+a base de estoque, TypeScript/lint/build passam (lint com um aviso de imagem), e
+Auth/Data API foram validados com fixtures Neon. As duas contas de produção foram
+confirmadas pelo usuário. APK permanece como última etapa. O histórico inicial
+fica registrado para comparação:
 
 | Verificação | Resultado |
 |---|---|

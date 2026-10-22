@@ -64,6 +64,10 @@ contas antigas aos novos logins. Consulte o estado e a recuperação em
 Consulte a [revisão e os testes](docs/VALIDACAO_NEON.md) e a
 [sequência de implementação do estoque](docs/PLANO_ESTOQUE.md).
 
+A [base de estoque](docs/ESTOQUE_BASE.md) amplia o banco para total de comprimidos,
+comprimidos por caixa, consumo diário e duração calculada. O cadastro atual do
+medicamento permanece igual; a configuração pela interface será uma etapa posterior.
+
 Para desenvolver, configure um arquivo local `.env.local` (ignorado pelo Git):
 
 ```dotenv
