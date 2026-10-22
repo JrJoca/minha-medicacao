@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
 import { syncRoutineNotifications } from "@/lib/native-notifications";
+import { parseQuantity, unitLabel, type QuantityUnit, type RoutineDose } from "@/lib/inventory";
 import { MedicationInventory } from "@/components/medication-inventory";
 import {
   emptyPrescriptionDraft,
@@ -64,6 +65,11 @@ type Routine = {
   id: string;
   name: string;
   medicineIds: string[];
+  doses: Record<string,RoutineDose>;
+  frequencyKind: "daily" | "other" | null;
+  stockTracking: boolean;
+  archivedAt: string | null;
+  intakeId: string | null;
   time: string;
   limit: string;
   period: string;
@@ -131,6 +137,16 @@ export default function Home() {
   const [whatsAppPhone, setWhatsAppPhone] = useState("");
   const [includeMedicineNames, setIncludeMedicineNames] = useState(true);
   const [selected, setSelected] = useState<string[]>([]);
+  const [routineDoses,setRoutineDoses] = useState<Record<string,RoutineDose>>({});
+  const [frequencyKind,setFrequencyKind] = useState<"daily"|"other">("daily");
+  const [routineSaving,setRoutineSaving] = useState(false);
+  const [routineError,setRoutineError] = useState("");
+  const routineSaveLock=useRef(false);
+  const routineSaveCommand=useRef<{payload:string;id:string}|null>(null);
+  const [inventoryRevision,setInventoryRevision]=useState(0);
+  const intakeLock=useRef(false);
+  const [intakeBusy,setIntakeBusy]=useState(false);
+  const intakeCommands=useRef(new Map<string,{id:string;at:string}>());
   const [medicineToAdd, setMedicineToAdd] = useState("");
   const [noEndDate, setNoEndDate] = useState(false);
   const [notice, setNotice] = useState(
@@ -148,7 +164,7 @@ export default function Home() {
   };
   const routinesByTime = useMemo(
     () =>
-      [...routines].sort(
+      [...routines].filter(r=>!r.archivedAt).sort(
         (first, second) =>
           timeToMinutes(first.time) - timeToMinutes(second.time),
       ),
@@ -165,7 +181,7 @@ export default function Home() {
     ids.map((id) => medicines.find((m) => m.id === id)?.name).filter(Boolean);
   const reportIsToday = reportDate === localDateKey(new Date());
   const reportRows = routines
-    .filter((routine) => !routine.paused)
+    .filter((routine) => !routine.paused || reportIntakes.some(i=>i.routine_id===routine.id))
     .map((routine) => {
       const intake = reportIntakes.find(
         (item) => item.routine_id === routine.id,
@@ -186,7 +202,7 @@ export default function Home() {
   const historyRows = dateKeysBetween(historyStart, historyEnd)
     .reverse()
     .flatMap((date) =>
-      routines.map((routine) => {
+      routines.filter(r=>!r.archivedAt || historyIntakes.some(i=>i.routine_id===r.id && localDateKey(new Date(i.taken_at))===date)).map((routine) => {
         const intake = historyIntakes.find(
           (item) =>
             item.routine_id === routine.id &&
@@ -207,6 +223,7 @@ export default function Home() {
     setDataLoading(true);
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay=new Date(startOfDay);endOfDay.setDate(endOfDay.getDate()+1);
     const [medicineResult, routineResult, linkResult, intakeResult] =
       await Promise.all([
         getBackend()
@@ -214,11 +231,11 @@ export default function Home() {
           .select("id,name,dosage,reference_url")
           .order("created_at"),
         getBackend().from("medication_routines").select("*").order("created_at"),
-        getBackend().from("routine_medications").select("routine_id,medication_id"),
+        getBackend().from("routine_medications").select("routine_id,medication_id,quantity_per_intake,quantity_unit"),
         getBackend()
           .from("medication_intakes")
-          .select("routine_id,taken_at")
-          .gte("taken_at", startOfDay.toISOString()),
+          .select("id,routine_id,taken_at")
+          .gte("taken_at", startOfDay.toISOString()).lt("taken_at",endOfDay.toISOString()),
       ]);
     if (revision !== authRevision.current) return;
     const error =
@@ -248,6 +265,11 @@ export default function Home() {
         medicineIds: links
           .filter((l) => l.routine_id === r.id)
           .map((l) => l.medication_id),
+        doses: Object.fromEntries(links.filter(l=>l.routine_id===r.id).map(l=>[l.medication_id,{quantity:l.quantity_per_intake == null ? "" : String(l.quantity_per_intake),unit:l.quantity_unit || "tablet"}])),
+        frequencyKind:r.frequency_kind,
+        stockTracking:r.stock_tracking_enabled,
+        archivedAt:r.archived_at,
+        intakeId:todayIntakes.find(i=>i.routine_id===r.id)?.id || null,
         time: String(r.scheduled_time).slice(0, 5),
         limit: String(r.deadline_time).slice(0, 5),
         period: r.period_description,
@@ -272,6 +294,9 @@ export default function Home() {
       if (!active) return;
       const revision = ++authRevision.current;
       setUser(null);
+      intakeCommands.current.clear();
+      setRoutineOpen(false);
+      setRoutineDoses({});
       setMedicines([]);
       setRoutines([]);
       setReportIntakes([]);
@@ -401,25 +426,7 @@ export default function Home() {
   ) {
     if (viewerMutationBlocked()) return;
     if (!user) return;
-    const now = new Date();
-    const currentTime = [
-      now.getHours(),
-      now.getMinutes(),
-      now.getSeconds(),
-    ]
-      .map((value) => String(value).padStart(2, "0"))
-      .join(":");
-    const { error } = intake
-      ? await getBackend().from("medication_intakes").delete().eq("id", intake.id)
-      : await getBackend().from("medication_intakes").insert({
-          user_id: user.id,
-          routine_id: routine.id,
-          taken_at: new Date(`${date}T${currentTime}`).toISOString(),
-        });
-    if (error) {
-      setNotice("Erro ao alterar o status: " + error.message);
-      return;
-    }
+    if (!await changeIntake(routine,intake ? "undo" : "confirm",date,intake)) return;
     setNotice(
       intake
         ? "O dia foi alterado para não tomado."
@@ -436,37 +443,7 @@ export default function Home() {
     if (viewerMutationBlocked()) return;
     if (!user || !correctedDate || !correctedTime) return;
     const correctedAt = new Date(`${correctedDate}T${correctedTime}:00`);
-    const targetStart = new Date(`${correctedDate}T00:00:00`);
-    const targetEnd = new Date(targetStart);
-    targetEnd.setDate(targetEnd.getDate() + 1);
-    const { data: existing } = await getBackend()
-      .from("medication_intakes")
-      .select("id")
-      .eq("routine_id", routine.id)
-      .gte("taken_at", targetStart.toISOString())
-      .lt("taken_at", targetEnd.toISOString())
-      .neq("id", intake?.id || "00000000-0000-0000-0000-000000000000")
-      .limit(1)
-      .maybeSingle();
-    if (existing) {
-      setNotice("Já existe uma tomada dessa rotina na data escolhida.");
-      return;
-    }
-    const query = intake
-      ? getBackend()
-          .from("medication_intakes")
-          .update({ taken_at: correctedAt.toISOString() })
-          .eq("id", intake.id)
-      : getBackend().from("medication_intakes").insert({
-          user_id: user.id,
-          routine_id: routine.id,
-          taken_at: correctedAt.toISOString(),
-        });
-    const { error } = await query;
-    if (error) {
-      setNotice("Erro ao salvar registro: " + error.message);
-      return;
-    }
+    if (!await changeIntake(routine,intake ? "correct" : "confirm",correctedDate,intake,correctedAt.toISOString())) return;
     setEditingReportRoutineId(null);
     setCorrectedDate("");
     setCorrectedTime("");
@@ -727,7 +704,10 @@ export default function Home() {
   function openNewRoutine() {
     if (viewerMutationBlocked()) return;
     setEditingRoutine(null);
+    setRoutineError("");
     setSelected([]);
+    setRoutineDoses({});
+    setFrequencyKind("daily");
     setMedicineToAdd("");
     setNoEndDate(false);
     setRoutineOpen(true);
@@ -735,7 +715,10 @@ export default function Home() {
   function openEditRoutine(routine: Routine) {
     if (viewerMutationBlocked()) return;
     setEditingRoutine(routine);
+    setRoutineError("");
     setSelected([...routine.medicineIds]);
+    setRoutineDoses({...routine.doses});
+    setFrequencyKind(routine.frequencyKind || "daily");
     setMedicineToAdd("");
     setNoEndDate(routine.noEndDate);
     setRoutineOpen(true);
@@ -770,166 +753,76 @@ export default function Home() {
           ? "paused"
           : "active"
         : "active",
-      updated_at: new Date().toISOString(),
     };
-    if (editingRoutine) {
-      const { error } = await getBackend()
-        .from("medication_routines")
-        .update(payload)
-        .eq("id", editingRoutine.id);
-      if (error) {
-        setNotice("Erro ao atualizar rotina: " + error.message);
-        return;
-      }
-      const { error: deleteLinkError } = await getBackend()
-        .from("routine_medications")
-        .delete()
-        .eq("routine_id", editingRoutine.id);
-      if (deleteLinkError) {
-        setNotice("Erro ao atualizar medicamentos: " + deleteLinkError.message);
-        return;
-      }
-      const { error: linkError } = await getBackend()
-        .from("routine_medications")
-        .insert(
-          selected.map((medication_id) => ({
-            user_id: user.id,
-            routine_id: editingRoutine.id,
-            medication_id,
-          })),
-        );
-      if (linkError) {
-        setNotice("Erro ao atualizar medicamentos: " + linkError.message);
-        await loadData();
-        return;
-      }
-      setRoutines((list) =>
-        list.map((r) =>
-          r.id === editingRoutine.id
-            ? {
-                ...r,
-                name,
-                medicineIds: [...selected],
-                time: String(d.get("time")),
-                limit: String(d.get("limit")),
-                period: String(d.get("period")),
-                durationValue,
-                durationUnit,
-                noEndDate,
-                totalDays,
-              }
-            : r,
-        ),
-      );
-      setSelected([]);
-      setMedicineToAdd("");
-      setNoEndDate(false);
-      setEditingRoutine(null);
-      setRoutineOpen(false);
-      setNotice("A rotina " + name + " foi atualizada.");
-      return;
-    }
-    const { data, error } = await getBackend()
-      .from("medication_routines")
-      .insert(payload)
-      .select("id")
-      .single();
-    if (error) {
-      setNotice("Erro ao salvar rotina: " + error.message);
-      return;
-    }
-    const { error: linkError } = await getBackend()
-      .from("routine_medications")
-      .insert(
-        selected.map((medication_id) => ({
-          user_id: user.id,
-          routine_id: data.id,
-          medication_id,
-        })),
-      );
-    if (linkError) {
-      await getBackend().from("medication_routines").delete().eq("id", data.id);
-      setNotice("Erro ao relacionar os medicamentos: " + linkError.message);
-      return;
-    }
-    setRoutines((list) => [
-      ...list,
-      {
-        id: data.id,
-        name,
-        medicineIds: selected,
-        time: String(d.get("time")),
-        limit: String(d.get("limit")),
-        period: String(d.get("period")),
-        durationValue,
-        durationUnit,
-        noEndDate,
-        currentDay: 1,
-        totalDays,
-        taken: false,
-        takenAt: null,
-        paused: false,
-      },
-    ]);
-    setSelected([]);
-    setMedicineToAdd("");
-    setNoEndDate(false);
-    setEditingRoutine(null);
-    setRoutineOpen(false);
-    setNotice("A rotina " + name + " foi criada.");
+    if (routineSaveLock.current) return;
+    setRoutineError("");
+    let doses;
+    try {
+      doses=selected.map(id=>{
+        const dose=routineDoses[id]; const quantity=parseQuantity(dose?.quantity || "",true);
+        if (quantity===null) throw new Error("Informe a quantidade de cada medicamento por tomada.");
+        return {medication_id:id,quantity,unit:dose.unit};
+      });
+    } catch(error) {setRoutineError(error instanceof Error ? error.message : "Confira as quantidades.");return;}
+    routineSaveLock.current=true;setRoutineSaving(true);
+    const revision=authRevision.current;
+    const intent=JSON.stringify({routine:editingRoutine?.id,...payload,frequencyKind,doses});
+    if(routineSaveCommand.current?.payload!==intent) routineSaveCommand.current={payload:intent,id:crypto.randomUUID()};
+    try {
+      const {error}=await getBackend().rpc("save_routine_with_doses",{p_routine_id:editingRoutine?.id || null,p_definition:{...payload,frequency_kind:frequencyKind,command_id:routineSaveCommand.current.id},p_doses:doses});
+      if (revision!==authRevision.current) return;
+      if (error) {setRoutineError("Erro ao salvar rotina: "+error.message);return;}
+      routineSaveCommand.current=null;
+      setRoutineOpen(false);setEditingRoutine(null);setSelected([]);setRoutineDoses({});
+      setInventoryRevision(v=>v+1);
+      await loadData();
+      setNotice("Rotina salva com as quantidades por tomada. As próximas confirmações atualizarão o estoque.");
+    } catch {if(revision===authRevision.current) setRoutineError("Conexão interrompida. Tente salvar novamente; a operação será consultada sem criar uma rotina duplicada.");}
+    finally {routineSaveLock.current=false;setRoutineSaving(false);}
   }
   function addSelectedMedicine() {
     if (viewerMutationBlocked()) return;
     const id = medicineToAdd;
     if (!id || selected.includes(id)) return;
     setSelected((list) => [...list, id]);
+    setRoutineDoses(current=>({...current,[id]:{quantity:"",unit:"tablet"}}));
     setMedicineToAdd("");
   }
   function removeSelectedMedicine(id: string) {
     if (viewerMutationBlocked()) return;
     setSelected((list) => list.filter((item) => item !== id));
   }
-  async function toggleTaken(id: string) {
-    if (viewerMutationBlocked()) return;
-    const routine = routines.find((r) => r.id === id);
-    if (!routine || !user) return;
-    let registeredAt: string | null = null;
-    if (routine.taken) {
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-      const { error } = await getBackend()
-        .from("medication_intakes")
-        .delete()
-        .eq("routine_id", id)
-        .gte("taken_at", start.toISOString());
-      if (error) {
-        setNotice("Erro ao desfazer conclusão: " + error.message);
-        return;
-      }
-    } else {
-      const { data, error } = await getBackend()
-        .from("medication_intakes")
-        .insert({ user_id: user.id, routine_id: id })
-        .select("taken_at")
-        .single();
-      if (error) {
-        setNotice("Erro ao registrar conclusão: " + error.message);
-        return;
-      }
-      registeredAt = data.taken_at;
+  async function changeIntake(routine:Routine,action:"confirm"|"undo"|"correct",date:string,intake?:Intake,at?:string) {
+    if (viewerMutationBlocked() || !user || intakeLock.current) return false;
+    if (action==="confirm" && !routine.stockTracking) {
+      openEditRoutine(routine);setNotice("Informe a quantidade de cada medicamento e salve a rotina antes de confirmar a tomada.");return false;
     }
-    setRoutines((list) =>
-      list.map((r) =>
-        r.id === id
-          ? { ...r, taken: !r.taken, takenAt: registeredAt }
-          : r,
-      ),
-    );
-    setNotice(
-      routine?.taken
-        ? "Conclusão desfeita."
-        : "Rotina concluída. Agora você pode enviar a confirmação pelo WhatsApp.",
-    );
+    const key=[user.authId,routine.id,action,date,intake?.id || "",at || ""].join(":");
+    let command=intakeCommands.current.get(key);
+    if (!command) {
+      const now=new Date();
+      command={id:crypto.randomUUID(),at:at || new Date(`${date}T${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}:${String(now.getSeconds()).padStart(2,"0")}`).toISOString()};
+      intakeCommands.current.set(key,command);
+    }
+    intakeLock.current=true;setIntakeBusy(true);
+    const revision=authRevision.current;
+    try {
+      const {error}=await getBackend().rpc("change_routine_intake",{p_command:command.id,p_routine_id:routine.id,p_action:action,p_taken_at:command.at,p_timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,p_intake_id:intake?.id || null});
+      if (revision!==authRevision.current) return false;
+      if (error) {setNotice("Não foi possível atualizar a tomada: "+error.message);return false;}
+      intakeCommands.current.delete(key);
+      setInventoryRevision(v=>v+1);
+      return true;
+    } catch {if(revision===authRevision.current) setNotice("Conexão interrompida. Tente novamente para consultar a mesma operação, sem duplicar a baixa.");return false;}
+    finally {intakeLock.current=false;setIntakeBusy(false);}
+  }
+  async function toggleTaken(id: string) {
+    const routine=routines.find(r=>r.id===id);
+    if (!routine) return;
+    const intake=routine.intakeId && routine.takenAt ? {id:routine.intakeId,routine_id:id,taken_at:routine.takenAt} : undefined;
+    if (!await changeIntake(routine,routine.taken ? "undo" : "confirm",localDateKey(new Date()),intake)) return;
+    await loadData();
+    setNotice(routine.taken ? "Conclusão desfeita e baixa original estornada." : "Tomada registrada. O estoque foi atualizado conforme as quantidades da rotina.");
   }
   function saveWhatsAppSettings(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -996,19 +889,14 @@ export default function Home() {
     setRoutines((list) =>
       list.map((r) => (r.id === id ? { ...r, paused } : r)),
     );
+    setInventoryRevision(v=>v+1);
   }
   async function remove(id: string) {
     if (viewerMutationBlocked()) return;
-    const { error } = await getBackend()
-      .from("medication_routines")
-      .delete()
-      .eq("id", id);
-    if (error) {
-      setNotice("Erro ao excluir rotina: " + error.message);
-      return;
-    }
-    setRoutines((list) => list.filter((r) => r.id !== id));
-    setNotice("Rotina excluída.");
+    const {error}=await getBackend().rpc("archive_medication_routine",{p_routine_id:id});
+    if (error) {setNotice("Erro ao arquivar rotina: "+error.message);return;}
+    await loadData();setInventoryRevision(v=>v+1);
+    setNotice("Rotina arquivada. As tomadas e movimentações anteriores foram preservadas.");
   }
 
   if (authLoading)
@@ -1145,7 +1033,7 @@ export default function Home() {
                 </DialogHeader>
                 <form
                   onSubmit={saveWhatsAppSettings}
-                  className="mt-2 grid min-w-0 gap-5"
+                  className="mt-2 grid min-w-0 grid-cols-1 gap-5"
                 >
                   <div className="grid min-w-0 gap-2">
                     <Label htmlFor="whatsAppPhone">Número destinatário</Label>
@@ -1200,7 +1088,7 @@ export default function Home() {
                     Relatório diário
                   </DialogTitle>
                 </DialogHeader>
-                <div className="mt-2 grid min-w-0 gap-5">
+                <div className="mt-2 grid min-w-0 grid-cols-1 gap-5">
                   <div className="grid gap-2 sm:max-w-xs">
                     <Label htmlFor="reportDate">Data do relatório</Label>
                     <Input
@@ -1800,7 +1688,7 @@ export default function Home() {
                 </DialogHeader>
                 <form
                   onSubmit={addMedicine}
-                  className="mt-2 grid min-w-0 gap-5"
+                  className="mt-2 grid min-w-0 grid-cols-1 gap-5"
                 >
                   <Field
                     id="medicineName"
@@ -2092,7 +1980,7 @@ export default function Home() {
                 </div>
               </DialogContent>
             </Dialog>
-            <Dialog open={routineOpen} onOpenChange={setRoutineOpen}>
+            <Dialog open={routineOpen} onOpenChange={open=>{if(!routineSaveLock.current) setRoutineOpen(open);}}>
               <DialogTrigger asChild>
                 <Button
                   onClick={openNewRoutine}
@@ -2112,8 +2000,9 @@ export default function Home() {
                 <form
                   key={editingRoutine?.id || "new"}
                   onSubmit={saveRoutine}
-                  className="mt-2 grid min-w-0 gap-5"
+                  className="mt-2 grid min-w-0 grid-cols-1 gap-5"
                 >
+                  <fieldset disabled={routineSaving} className="contents">
                   <Field
                     id="routineName"
                     label="Nome da rotina"
@@ -2132,7 +2021,7 @@ export default function Home() {
                         onValueChange={setMedicineToAdd}
                       >
                         <SelectTrigger
-                          className="h-12 flex-1 rounded-xl"
+                          className="h-12 min-w-0 flex-1 rounded-xl"
                           aria-label="Selecionar medicamento"
                         >
                           <SelectValue placeholder="Selecione um medicamento" />
@@ -2168,7 +2057,7 @@ export default function Home() {
                           return medicine ? (
                             <div
                               key={id}
-                              className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3"
+                              className="flex flex-wrap items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3"
                             >
                               <Pill className="size-5 shrink-0 text-blue-600" />
                               <span className="min-w-0 flex-1">
@@ -2189,6 +2078,16 @@ export default function Home() {
                               >
                                 <X className="size-4" />
                               </Button>
+                              <div className="grid w-full grid-cols-2 gap-3">
+                                <div className="grid gap-2"><Label htmlFor={`dose-${id}`}>Quantidade por tomada</Label>
+                                  <Input id={`dose-${id}`} aria-label={`Quantidade por tomada de ${medicine.name}`} type="number" inputMode="decimal" min="0.001" max="999999999.999" step="0.001" required value={routineDoses[id]?.quantity || ""} onChange={e=>setRoutineDoses(current=>({...current,[id]:{...current[id],quantity:e.target.value}}))} placeholder="Ex.: 2 ou 0,5" />
+                                </div>
+                                <div className="grid gap-2"><Label htmlFor={`dose-unit-${id}`}>Unidade</Label>
+                                  <select id={`dose-unit-${id}`} aria-label={`Unidade de ${medicine.name}`} className="h-10 min-w-0 rounded-xl border bg-white px-2 text-sm" value={routineDoses[id]?.unit || "tablet"} onChange={e=>setRoutineDoses(current=>({...current,[id]:{...current[id],unit:e.target.value as QuantityUnit}}))}>
+                                    <option value="tablet">Comprimidos</option><option value="ml">ml</option>
+                                  </select>
+                                </div>
+                              </div>
                             </div>
                           ) : null;
                         })}
@@ -2220,12 +2119,11 @@ export default function Home() {
                       value={editingRoutine?.limit || "09:00"}
                     />
                   </div>
-                  <Field
-                    id="period"
-                    label="Frequência"
-                    placeholder="Ex.: Todos os dias"
-                    value={editingRoutine?.period}
-                  />
+                  <div className="grid gap-2"><Label htmlFor="frequency-kind">Repetição para a previsão de estoque</Label>
+                    <select id="frequency-kind" className="h-11 w-full min-w-0 max-w-full rounded-xl border bg-white px-3" value={frequencyKind} onChange={e=>setFrequencyKind(e.target.value as "daily"|"other")}><option value="daily">Diária: uma tomada neste horário</option><option value="other">Outra frequência (sem previsão)</option></select>
+                    <p className="text-xs leading-5 text-slate-500">Para tomar em vários horários, crie uma rotina para cada horário. As quantidades das rotinas diárias ativas serão somadas.</p>
+                  </div>
+                  <Field id="period" label="Orientação de frequência" placeholder="Ex.: Conforme orientação médica" value={editingRoutine?.period || "Todos os dias"} />
                   <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
                     <Checkbox
                       checked={noEndDate}
@@ -2273,15 +2171,17 @@ export default function Home() {
                   </div>
                   <p className="text-sm text-slate-500">
                     {noEndDate
-                      ? "A rotina continuará ativa até ser pausada ou excluída."
+                      ? "A rotina continuará ativa até ser pausada ou arquivada."
                       : "Exemplos: 30 dias ou 12 semanas."}
                   </p>
+                  {routineError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{routineError}</p>}
                   <Button
-                    disabled={selected.length === 0}
+                    disabled={selected.length === 0 || routineSaving}
                     className="h-12 rounded-xl bg-blue-600"
                   >
-                    {editingRoutine ? "Salvar alterações" : "Salvar rotina"}
+                    {routineSaving ? "Salvando…" : editingRoutine ? "Salvar alterações" : "Salvar rotina"}
                   </Button>
+                  </fieldset>
                 </form>
               </DialogContent>
             </Dialog>
@@ -2335,7 +2235,7 @@ export default function Home() {
             note={medicines.length + " medicamentos cadastrados"}
           />
         </section>
-        <MedicationInventory key={user.authId} medicines={medicines} user={user} dataLoading={dataLoading} />
+        <MedicationInventory key={user.authId} medicines={medicines} user={user} dataLoading={dataLoading} revision={inventoryRevision} />
         <div className="mb-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div>
             <h2 className="text-xl font-bold">Rotinas de hoje</h2>
@@ -2395,7 +2295,7 @@ export default function Home() {
                       {r.taken && !r.paused && <Badge text="CONCLUÍDA" green />}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {medicineNames(r.medicineIds).map((name) => (
+                      {r.medicineIds.map(id=>{const m=medicines.find(m=>m.id===id);const dose=r.doses[id];return m ? `${m.name}${dose?.quantity ? ` · ${dose.quantity} ${unitLabel(dose.unit)}` : " · quantidade pendente"}` : "";}).filter(Boolean).map((name) => (
                         <span
                           key={name}
                           className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700"
@@ -2427,7 +2327,7 @@ export default function Home() {
                     {!r.paused && (
                       <Button
                         onClick={() => toggleTaken(r.id)}
-                        disabled={isViewer}
+                        disabled={isViewer || intakeBusy}
                         variant={r.taken ? "outline" : "default"}
                         className={
                           "h-11 w-full rounded-xl sm:w-auto " +
@@ -2476,7 +2376,7 @@ export default function Home() {
                           className="text-red-600"
                         >
                           <Trash2 />
-                          Excluir
+                          Arquivar
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

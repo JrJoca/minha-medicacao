@@ -1,64 +1,84 @@
-# Interface de estoque
+# Estoque por tomada: interface e regras
 
-O estoque fica nos cartões de “Medicamentos cadastrados”. O cadastro original
-continua com nome, dosagem e link; OCR e criação de rotinas conservam seus fluxos.
-A interface complementa a estrutura já aplicada no Neon, sem nova migração.
+Implementação no PR #3, para revisão antes de publicar. A base 003 está aplicada
+no Neon de produção; a ampliação 004 foi ensaiada somente na branch sintética.
+O domínio principal continua com a versão publicada anteriormente.
 
-## Fluxo
+## Como usar após a implantação
 
-1. O proprietário escolhe **Configurar estoque** no cartão do medicamento.
-2. Informa total de comprimidos disponíveis, comprimidos por caixa e comprimidos
-   por dia. Os campos podem ficar em branco quando a informação for desconhecida.
-3. A prévia mostra a duração: **10 comprimidos / 2 por dia = 5 dias**.
-4. **Salvar estoque** grava a configuração no Neon pelo JWT da pessoa. O cartão
-   passa a mostrar os resultados gerados no banco, inclusive após recarregar.
-5. **Atualizar estoque** permite revisar os valores. **Atualizar saldos** consulta
-   novamente o banco, sem modificar nenhuma informação.
+1. Cadastre o medicamento com os campos originais: nome, dosagem e link. OCR
+   continua exigindo revisão; “500 mg” não vira quantidade de comprimidos.
+2. Em **Configurar estoque**, informe o saldo físico e a quantidade por caixa ou
+   frasco. Escolha **comprimidos** ou **ml**. Zero significa esgotado; em branco
+   significa desconhecido. Não há conversão entre unidades. Uma apresentação
+   diferente deve ser cadastrada como outro medicamento.
+3. Ao criar ou editar uma rotina, informe a **quantidade por tomada de cada
+   medicamento**, com a unidade correspondente. Exemplos: 2 comprimidos de A e
+   2,5 ml de B. São aceitas até três casas decimais, incluindo frações de comprimido
+   explicitamente informadas; o aplicativo não determina a prescrição.
+4. Selecione frequência diária quando houver uma tomada diária naquele horário.
+   Para vários horários, crie uma rotina por horário. A opção de outra frequência
+   preserva a orientação textual e a confirmação manual, mas fica sem previsão.
+5. **Concluir rotina** grava a tomada e desconta todos os medicamentos na mesma
+   transação. Relatório e histórico utilizam o mesmo caminho. Nenhuma baixa é
+   causada apenas pelo horário, atraso, pausa ou ausência de confirmação.
+6. **Desfazer** estorna a quantidade da baixa original uma única vez. Alterar a
+   dose futura não muda o consumo passado; corrigir data/hora não desconta de novo.
+7. Se faltar estoque, a tomada é registrada e o saldo fica negativo, com aviso
+   para conferir o saldo físico. Esse comportamento foi escolhido pelo usuário.
+8. Reposições podem ser refletidas declarando o novo saldo físico, com movimento
+   de ajuste. Compras como entradas aditivas com motivo/data terão fluxo próprio.
 
-O visualizador tem **Consultar estoque**, com detalhes somente para leitura.
-Não recebe formulário nem botão de gravação; o RLS também bloqueia mutações.
+O visualizador consulta os saldos e as rotinas, com mutações bloqueadas também
+no servidor. Uma troca de conta limpa os dados anteriores e cancela consultas.
+Falhas de estoque não impedem o acesso a medicamentos e rotinas.
 
-## Estados e validação
+## Previsão
 
-- Sem saldo: “Estoque não informado”; nenhum zero é preenchido automaticamente.
-- Saldo zero: “Estoque esgotado”, distinto de informação ausente.
-- Sem saldo ou consumo diário: “Sem previsão”.
-- Saldo 10 e consumo 3/dia: aproximadamente 3,33 dias e 3 dias completos cobertos.
-- Valores inteiros nos limites do PostgreSQL; saldo não negativo, caixa e consumo
-  diário positivos. Campos vazios são enviados como NULL.
-- Tamanho da caixa não multiplica o saldo físico nem a frequência informada.
-- Erro ao salvar conserva o formulário para nova tentativa, sem afirmar sucesso.
-- Erro ao consultar estoques mantém medicamentos e rotinas acessíveis, mostra
-  indisponibilidade e oferece nova tentativa; não inventa saldos.
-- A troca de conta desmonta os dados do estoque e cancela consultas anteriores.
-- Uma trava durante o envio impede gravações duplicadas pelo botão do formulário.
+O consumo diário vem da soma das quantidades das **rotinas diárias ativas** do
+medicamento. Dez comprimidos com uma rotina de dois por dia duram cinco dias.
+Duas rotinas de um comprimido também totalizam dois por dia. Pausar/arquivar retira
+sua quantidade dessa soma. Se houver rotina ativa sem dose/frequência estruturada,
+a previsão fica desconhecida. O tamanho da embalagem não multiplica o saldo.
 
-O saldo é declarado manualmente. Confirmar/desfazer uma tomada ainda não altera
-estoque. A interface informa isso junto aos cartões. Compras, movimentos,
-estornos e previsão por agenda permanecem como próximas entregas; Android fica
-como última etapa.
+Essa divisão é uma estimativa proporcional, não uma simulação de agenda. Última
+dose coberta, primeira falta, término de tratamentos e recorrências complexas
+continuam pendentes. Saldo negativo mostra falta e cobertura de zero dias.
 
-## Implementação e evidências
+## Preservação e compatibilidade
 
-- `components/medication-inventory.tsx`: listagem, consulta, formulário, estados de
-  carregamento/erro e persistência por usuário.
-- `lib/medication-stock.ts`: normalização, validação e prévia, sem acesso administrativo.
-- A consulta usa `medication_stock_summary`; a gravação usa `medication_stock`,
-  com o ID protegido da conta atual. Campos calculados não são enviados ao banco.
-- 77 testes automatizados aprovados: migração/RLS/corte/base de estoque e oito
-  casos da interface. Instalação com lockfile, TypeScript e build passaram.
-- Lint passou com um aviso preexistente de imagem no fluxo de OCR.
-- Navegador com build estático e Neon sintético: cadastro original preservado,
-  saldo desconhecido, salvar/recarregar, 10/2=5, uma requisição por envio, consumo
-  zero bloqueado, dias parciais, zero distinto de NULL, falha com valores mantidos,
-  nova tentativa, viewer somente leitura, outra conta isolada e limpeza ao sair.
-- Falha de consulta preservou medicamentos/rotinas e a nova tentativa recuperou
-  os estoques. Troca de conta na mesma aba descartou uma resposta antiga atrasada.
-- Layout de celular validado em 320 e 360 px, com diálogo contido na tela e ações
-  alcançáveis por rolagem; sem erros de página.
-- Escritas de teste restritas às fixtures. As capturas usam dados sintéticos.
+- Quantidades antigas são copiadas dos campos estruturados existentes, mantendo
+  campos originais, IDs, textos e timestamps. Nenhuma dose é inferida de texto.
+- Rotinas e tomadas antigas não recebem descontos retroativos. A interface
+  solicita a configuração de doses antes de uma nova confirmação de rotina legada.
+- Tomadas antigas sem baixa não geram reposição ao desfazer.
+- Consumo com saldo desconhecido é registrado na trilha, sem inventar zero. A
+  primeira contagem física não desconta esses registros novamente; o estorno de
+  uma baixa que não afetou saldo também não cria estoque após essa contagem.
+- Movimentos guardam nome/dosagem/quantidade da tomada. Clientes só podem lê-los;
+  não podem apagar, editar ou inserir movimentos diretamente.
+- **Arquivar** substitui a exclusão de rotinas na nova interface, conservando
+  tomadas e movimentos. Arquivadas saem de hoje/previsão e permanecem consultáveis
+  nas datas em que têm registros. Exclusões diretas que destruiriam fatos falham.
+- Clientes antigos continuam operando rotinas não configuradas. Em rotinas já
+  configuradas, inserção/remoção de tomadas passa pelos mesmos triggers de baixa
+  e estorno; edição antiga de doses/saldos é recusada com pedido de atualização.
+- Comandos de confirmação, estorno, correção, conferência física e salvamento de
+  rotina reutilizam um identificador após falha de rede. Uma operação concluída
+  não é executada novamente; payload diferente no mesmo identificador é recusado.
 
-O frontend está preparado para revisão no PR #3. O banco de produção já recebeu
-a ampliação, mas a publicação desta interface no domínio principal continua
-separada da revisão. A prévia da Vercel usa os endpoints finais do Neon; valores
-salvos por contas reais na prévia pertencem ao banco atual da aplicação.
+## Validação
+
+Testes locais cobrem migração, preservação, permissões, unidade/precisão,
+idempotência, rollback quando um medicamento falha, saldo negativo/desconhecido,
+estorno por snapshot, legado e virada de data local. Auth/Data API reais foram
+exercitados em uma branch Neon com fixtures, incluindo requisições simultâneas.
+O navegador validou doses por item, comprimidos/ml juntos, confirmar/desfazer,
+recarregar, visualizador e celular. Capturas externas ao Git usam apenas fixtures.
+TypeScript, lint e build fazem parte da verificação; o aviso preexistente de
+imagem do OCR permanece separado. Android continua como última etapa.
+
+A prévia automática da Vercel aponta para os endpoints de produção. A nova
+interface depende da migração 004; ela não constitui uma validação funcional
+antes dessa aplicação. As capturas e os testes com a branch sintética são a
+referência de revisão desta entrega.

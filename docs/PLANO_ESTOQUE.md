@@ -10,6 +10,13 @@ total de comprimidos, comprimidos por caixa e consumo diário, mantendo o cadast
 atual. Detalhes: `ESTOQUE_BASE.md`, `CORTE_NEON.md` e `VALIDACAO_NEON.md`.
 Android foi movido para a última etapa, conforme orientação do usuário.
 
+Atualização: o usuário pediu quantidade por medicamento na rotina, em comprimidos
+ou ml, com baixa ao confirmar, e escolheu registrar a tomada mesmo sem estoque.
+A ampliação 004 e a interface estão implementadas para revisão no PR #3, com
+ensaio sintético. Essa ampliação ainda não foi aplicada em produção. O consumo
+diário passa a vir das rotinas, com suporte a três casas decimais. Detalhes em
+`ESTOQUE_INTERFACE.md` e `ESTOQUE_ROTINAS_IMPLANTACAO.md`.
+
 ## Fontes conferidas
 
 - `Controle_Medicacao_Codex_Handoff_Consolidado_2026-10-19.pdf`, 27 páginas: continuidade, estado atual, riscos, regressão e estoque.
@@ -39,18 +46,18 @@ da base GitHub/Vercel.
 | 2 | [x] Concluir a transição completa para Neon | Cliente, banco, Auth e API publicados; duas contas vinculadas, backups e dados preservados. | Corte concluído; usuário confirmou acesso, dados e permissões das duas contas. |
 | 3 | [x] Base inicial de estoque no banco | Tabela separada com total, comprimidos por caixa, consumo diário e duração calculada; 10 / 2 = 5 dias. Cadastro e registros atuais preservados. | SQL/testes, ensaio e aplicação no destino final concluídos e registrados em ESTOQUE_BASE.md. Compras e movimentos continuam nas próximas etapas. |
 | 4 | [x] Permissões da base de estoque | Proprietário altera, viewer vinculado só consulta, outros usuários/anônimos não acessam. | Quatro políticas RLS e RPC com SECURITY INVOKER verificadas no ensaio e no destino final. Estender a proteção às futuras tabelas de movimentos. |
-| 5 | [x] Configuração dos medicamentos legados | Mostrar “Estoque não informado” e permitir informar saldo físico e consumo diário, conservando textos e históricos. | Interface preparada para revisão; ausência de informação não vira zero e não há baixa retroativa nem dose inferida. |
-| 6 | [x] Configuração de estoque em fluxo separado | Cadastro original preservado; formulário separado para saldo físico, comprimidos por caixa e consumo diário. | Salvar/recarregar no Neon sintético e exemplo 10 / 2 = 5 dias validados. Frontend preparado para revisão no PR #3. |
-| 7 | [ ] Compras, reposições e ajustes | Acrescentar entradas ao mesmo medicamento e permitir conciliação com origem/motivo e data auditáveis. | Saldo deriva de movimentos; retry não repete compra; histórico não é sobrescrito. |
-| 8 | [ ] Quantidade por medicamento na rotina | Informar comprimidos por tomada em cada vínculo; permitir doses diferentes numa rotina com vários medicamentos. | Quantidade positiva explícita; alteração futura não reescreve consumos antigos. |
-| 9 | [ ] Agenda estruturada e ocorrências | Representar frequência calculável, horários, duração/fim e pausas, separando data local da ocorrência de taken_at. Manter frequência textual antiga enquanto não configurada. | Recorrência e fuso têm regras documentadas; sem ocorrências ou faltas inventadas. |
-| 10 | [ ] Confirmação atômica e idempotente | Uma RPC valida dono/rotina/doses e grava tomada, snapshots e baixas de todos os medicamentos numa transação. | Confirmação desconta uma vez; duplo clique, retry, abas e web/Android não duplicam; falha intermediária faz rollback. |
-| 11 | [ ] Desfazer e corrigir com auditoria | Registrar estorno ligado à baixa original; mudar data/hora sem nova baixa; compensar alterações de quantidade. | Estorno recompõe uma vez; conflito de ocorrência é tratado; registro legado sem baixa não aumenta saldo. |
-| 12 | [ ] Histórico preservado e arquivamento | Manter o retrato do medicamento/dose/quantidade na tomada e proteger fatos históricos de exclusões em cascata. | Editar ou arquivar rotina não apaga histórico contábil nem altera snapshots passados. |
+| 5 | [x] Configuração dos medicamentos legados | Mostrar estoque desconhecido e solicitar saldo físico; quantidades de consumo são confirmadas por medicamento na rotina. | Implementado no PR para revisão, sem inferir doses ou descontar o passado. |
+| 6 | [x] Configuração separada do cadastro | Conferência física, quantidade por caixa/frasco e unidade, preservando nome/dosagem/link do cadastro. | Interface e RPC idempotente de ajuste implementadas e ensaiadas. |
+| 7 | [ ] Compras e entradas aditivas | Fluxo próprio de compra/reposição com quantidade acrescentada, motivo e data. A conferência física com ajuste auditado já está implementada. | Entrada por compra ainda pendente; não confundir com declarar o novo saldo físico. |
+| 8 | [x] Quantidade por medicamento na rotina | Quantidades positivas por tomada em comprimidos ou ml, com até três casas decimais e doses diferentes por item. | Implementado/ensaiado; alterações futuras não mudam as baixas antigas. Aguarda implantação. |
+| 9 | [ ] Agenda estruturada completa | Frequência diária/outra e ocorrência com data/fuso já implementadas; recorrências avançadas e término ainda pendentes. | A previsão atual só divide saldo pelo consumo das rotinas diárias ativas. |
+| 10 | [x] Confirmação atômica e idempotente | Tomada e baixas de todos os medicamentos na mesma transação; tentativas repetidas não duplicam. | Implementado/ensaiado com requisições simultâneas, rollback e saldo insuficiente. Aguarda implantação. |
+| 11 | [x] Desfazer e corrigir | Estorno pela quantidade original uma única vez; correção de data/hora sem novo consumo; legado não cria reposição fictícia. | Implementado/ensaiado, com snapshots de consumo e movimento de estorno. Aguarda implantação. |
+| 12 | [x] Preservação e arquivamento | Movimentos guardam nome/dosagem/quantidade; arquivamento conserva tomadas e protege contra cascatas destrutivas. | Implementado/ensaiado. A tela detalhada de movimentações ainda é futura. Aguarda implantação. |
 | 13 | [ ] Previsão de término | Simular próximas ocorrências de todas as rotinas do medicamento, respeitando saldo, doses já confirmadas, horários, pausas e fim. | Exibe última dose integralmente coberta e primeira ocorrência com falta; explica casos sem previsão. |
-| 14 | [x] Painel básico de estoque | Cartões com saldo, comprimidos por caixa/dia e duração estimada; configurar, consultar e atualizar dados. | Interface mobile e estados desconhecido/zero/sem previsão validados. Movimentações, reposição auditada e datas por agenda continuam nas próximas entregas. |
+| 14 | [x] Painel de estoque | Saldo, embalagem, unidade, consumo diário derivado das rotinas, duração e aviso de saldo negativo. | Implementado para revisão, com consulta de visualizador e estados desconhecido/zero/falta. |
 | 15 | [ ] Integrações e regressão web | Integrar relatório/histórico, manter OCR revisável, WhatsApp com horário persistido e envio manual e ordenação/próxima rotina. | Fluxos web existentes verificados; OCR não inventa estoque. Android fica na última etapa. |
-| 16 | [ ] Testes e apresentação das alterações | Executar testes de cálculo, RPC/RLS, concorrência, migração e interface; entregar diff, SQL, resultados e procedimento de implantação/compensação. | Evidência real, pendências explícitas e revisão antes de produção. |
+| 16 | [x] Testes e apresentação desta entrega | Testes de banco, permissões, idempotência, concorrência, migração e interface com fixtures; SQL e plano de implantação no PR. | 110 testes locais, TypeScript, lint e build; evidências de API/navegador sintéticos. Não equivale a publicação. |
 | 17 | [ ] Implantação controlada, após revisão | Fazer backup privado e verificar restauração; aplicar mudanças compatíveis, publicar versão aprovada e validar o resultado. | Autorização explícita para produção, SHA conferido e smoke seguro; sem escrita de testes em dados reais. |
 | 18 | [ ] Android — última etapa | Atualizar o APK com todas as funcionalidades web concluídas, origem no Neon Auth e notificações. | APK gerado e validado em dispositivo após as entregas anteriores. |
 
@@ -73,19 +80,19 @@ Login/cadastro/logout e sessão; perfil visualizador; medicamentos e links; sele
 
 ## Decisões de produto a fechar durante o desenho
 
-- **Inteiros ou frações:** a documentação completa especifica comprimidos inteiros positivos; o handoff abre a pergunta sobre meio comprimido. Base proposta: inteiros na primeira versão, sem prometer frações aprovadas.
-- **Saldo insuficiente:** conservar o fato de uma ingestão real, sinalizar divergência e permitir conciliação; a política de aceitação/bloqueio precisa ser definida. Não inventar compras nem esconder saldo divergente.
+- **Quantidade e unidade:** o pedido atual inclui comprimidos ou ml por tomada. Implementação aceita até três casas decimais; não infere doses nem converte apresentações.
+- **Saldo insuficiente:** usuário escolheu registrar a tomada e sinalizar a falta. Implementado com saldo negativo e conferência física explícita.
 - **Agenda e fuso:** decidir recorrências iniciais, fuso da conta/dispositivo e a que ocorrência pertence uma tomada após meia-noite. America/Sao_Paulo é referência inicial proposta.
 - **Contagem e pausa:** definir como avançam dias de tratamento e se pausa altera prazo. Não modificar essa regra silenciosamente.
 - **Histórico:** proposta de arquivamento quando houver movimentos, mantendo snapshots; preservar a experiência de exclusão onde não destrói fatos.
 - **Previsão:** usar ambas as datas, com rótulos distintos, conforme o detalhamento do segundo PDF.
 - **Alerta de estoque baixo:** limiar configurável a definir; sete dias é apenas sugestão. Novas notificações de estoque não são requisito fechado.
-- **Evoluções separadas:** lotes, validade, preço, gotas/ml/outras apresentações e modo offline não entram implicitamente no primeiro escopo.
+- **Evoluções separadas:** lotes, validade, preço, gotas/outras apresentações e modo offline não entram implicitamente no primeiro escopo.
 
 ## Validação e critérios de aceite
 
-Resultados iniciais de onboarding abaixo foram superados: 77 testes passam após
-a base e a interface de estoque, TypeScript/lint/build passam (lint com um aviso de imagem), e
+Resultados iniciais de onboarding abaixo foram superados: 110 testes passam após
+a ampliação por rotina e a interface de estoque, TypeScript/lint/build passam (lint com um aviso de imagem), e
 Auth/Data API foram validados com fixtures Neon. As duas contas de produção foram
 confirmadas pelo usuário. APK permanece como última etapa. O histórico inicial
 fica registrado para comparação:

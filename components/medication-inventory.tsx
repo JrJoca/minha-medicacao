@@ -8,21 +8,29 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getBackend, type ApplicationUser } from "@/lib/neon";
-import {
-  estimateStock, formatStockDuration, formatStockQuantity, normalizeStock,
-  parseStockDraft, stockDraft, stockFields,
-  type MedicationStock, type StockDraft, type StockErrors,
-} from "@/lib/medication-stock";
-
+import { formatStockDuration, formatStockQuantity } from "@/lib/medication-stock";
+import { normalizeInventory, parseQuantity, unitLabel, type Inventory, type QuantityUnit } from "@/lib/inventory";
 type Medicine = { id: string; name: string; dosage: string; link?: string };
-const stockColumns = "medication_id,user_id,total_tablets,tablets_per_box,tablets_per_day,estimated_days,full_days_covered";
+const stockFields = [
+  {key:"quantity",label:"Quantidade disponível",min:0},
+  {key:"quantity_per_package",label:"Quantidade por caixa ou frasco",min:0.001},
+] as const;
+type StockDraft = {quantity:string;quantity_per_package:string;unit:QuantityUnit};
+type StockErrors = Partial<Record<keyof StockDraft,string>>;
+const stockDraft = (s?:Inventory):StockDraft => ({quantity:String(s?.quantity ?? ""),quantity_per_package:String(s?.quantity_per_package ?? ""),unit:s?.unit ?? "tablet"});
+function parseStockDraft(draft:StockDraft) {
+  const errors:StockErrors={}; const values:{quantity:number|null;quantity_per_package:number|null}={quantity:null,quantity_per_package:null};
+  for (const {key,min} of stockFields) {try {values[key]=parseQuantity(draft[key],min>0);}catch {errors[key]="Informe uma quantidade válida com até 3 casas decimais.";}}
+  return {values,errors,valid:Object.keys(errors).length===0};
+}
 
-export function MedicationInventory({ medicines, user, dataLoading }: {
+export function MedicationInventory({ medicines, user, dataLoading, revision }: {
   medicines: Medicine[];
   user: ApplicationUser;
   dataLoading: boolean;
+  revision: number;
 }) {
-  const [stocks, setStocks] = useState<Record<string, MedicationStock>>({});
+  const [stocks, setStocks] = useState<Record<string, Inventory>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -35,11 +43,11 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
   const requestRevision = useRef(0);
   const mounted = useRef(false);
   const saveLock = useRef(false);
+  const saveCommand=useRef<{payload:string;id:string}|null>(null);
   const medicineIds = medicines.map(medicine => medicine.id).join(":");
   const canEdit = user.role === "owner";
   const selected = medicines.find(medicine => medicine.id === selectedId);
-  const parsed = parseStockDraft(draft);
-  const preview = parsed.valid ? estimateStock(parsed.values) : null;
+
 
   useEffect(() => {
     mounted.current = true;
@@ -54,11 +62,11 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
       setLoading(true);
       setLoadError("");
       try {
-        const { data, error } = await getBackend().rpc("medication_stock_summary").abortSignal(controller.signal);
+        const { data, error } = await getBackend().rpc("inventory_summary").abortSignal(controller.signal);
         if (error) throw error;
         if (controller.signal.aborted || revision !== requestRevision.current) return;
-        const next: Record<string, MedicationStock> = {};
-        for (const row of data ?? []) next[row.medication_id] = normalizeStock(row);
+        const next: Record<string, Inventory> = {};
+        for (const row of data ?? []) next[row.medication_id] = normalizeInventory(row);
         setStocks(next);
       } catch {
         if (!controller.signal.aborted && revision === requestRevision.current) {
@@ -70,11 +78,11 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
       }
     });
     return () => { controller.abort(); };
-  }, [medicineIds, user.authId, refresh]);
+  }, [medicineIds, user.authId, refresh, revision]);
 
   function openStock(medicine: Medicine) {
     if (loading || loadError) return;
-    setDraft(stockDraft(stocks[medicine.id]));
+    setDraft({...stockDraft(stocks[medicine.id]),quantity:stocks[medicine.id]?.quantity != null && stocks[medicine.id].quantity! < 0 ? "" : String(stocks[medicine.id]?.quantity ?? "")});
     setErrors({});
     setSaveError("");
     setMessage("");
@@ -91,19 +99,16 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
     setSaving(true);
     setSaveError("");
     const medicine = selected;
-    const revision = requestRevision.current;
+    const payload=JSON.stringify({id:medicine.id,...result.values,unit:draft.unit});
+    if(saveCommand.current?.payload!==payload) saveCommand.current={payload,id:crypto.randomUUID()};
     try {
-      const { data, error } = await getBackend().from("medication_stock")
-        .upsert({ medication_id: medicine.id, user_id: user.id, ...result.values }, { onConflict: "medication_id" })
-        .select(stockColumns).single();
-      if (error || !data) throw error || new Error("Estoque não confirmado.");
-      const saved = normalizeStock(data);
+      const { error } = await getBackend().rpc("set_medication_inventory", {
+        p_medication_id:medicine.id,p_quantity:result.values.quantity,p_package:result.values.quantity_per_package,p_unit:draft.unit,p_command:saveCommand.current.id,
+      });
+      if (error) throw error;
       if (!mounted.current) return;
-      if (revision === requestRevision.current) {
-        setStocks(current => ({ ...current, [medicine.id]: saved }));
-      } else {
-        setRefresh(value => value + 1);
-      }
+      saveCommand.current=null;
+      setRefresh(value => value + 1);
       setSelectedId(null);
       setMessage(`Estoque de ${medicine.name} atualizado.`);
     } catch {
@@ -114,7 +119,7 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
     }
   }
 
-  const informed = medicines.filter(medicine => stocks[medicine.id]?.total_tablets != null).length;
+  const informed = medicines.filter(medicine => stocks[medicine.id]?.quantity != null).length;
   return (
     <section className="mb-8" aria-labelledby="medication-list-title">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -127,8 +132,8 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
         </Button>
       </div>
       <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-sm leading-6 text-blue-900">
-        <p className="font-semibold">O estoque reflete o saldo informado.</p>
-        <p>As tomadas ainda não descontam comprimidos automaticamente. Mantenha o saldo atualizado ao conferir seus medicamentos.</p>
+        <p className="font-semibold">Estoque atualizado pelas tomadas.</p>
+        <p>Ao confirmar uma rotina configurada, as quantidades são descontadas. Ao desfazer, a baixa original é estornada. Confira o saldo físico para registrar reposições ou ajustes.</p>
       </div>
       {loadError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
         <p>{loadError}</p>
@@ -144,8 +149,9 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {medicines.map(medicine => {
             const stock = stocks[medicine.id];
-            const known = stock?.total_tablets != null;
-            const empty = stock?.total_tablets === 0;
+            const known = stock?.quantity != null;
+            const empty = stock?.quantity != null && stock.quantity <= 0;
+            const negative = stock?.quantity != null && stock.quantity < 0;
             const unavailable = loading || !!loadError;
             return <Card key={medicine.id} role="article" aria-label={`Medicamento: ${medicine.name}`} className="gap-0 rounded-2xl bg-white py-0">
               <CardContent className="flex h-full min-w-0 flex-col p-4">
@@ -161,16 +167,17 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500"><Package className="size-4" /> Estoque</p>
                     {!unavailable && <span className={`rounded-full px-2 py-1 text-xs font-semibold ${empty ? "bg-red-50 text-red-700" : known ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
-                      {empty ? "Estoque esgotado" : known ? "Estoque informado" : "Estoque não informado"}
+                      {negative ? "Saldo divergente: confira" : empty ? "Estoque esgotado" : known ? "Estoque informado" : "Estoque não informado"}
                     </span>}
                   </div>
                   {unavailable ? <p className="my-5 text-sm text-slate-500" role={loading ? "status" : undefined}>{loading ? "Carregando estoque…" : "Estoque indisponível"}</p> : <>
-                    <p className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900">{known ? formatStockQuantity(stock.total_tablets) : "—"}</p>
-                    <p className="text-sm text-slate-500">{known ? "comprimidos disponíveis" : "Informe o saldo físico atual"}</p>
+                    <p className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900">{known ? formatStockQuantity(stock.quantity) : "—"}</p>
+                    <p className="text-sm text-slate-500">{known ? `${unitLabel(stock?.unit)} disponíveis` : "Informe o saldo físico atual"}</p>
                     <dl className="my-4 grid grid-cols-2 gap-3 text-sm">
-                      <div><dt className="text-slate-500">Por caixa</dt><dd className="mt-1 font-semibold">{formatStockQuantity(stock?.tablets_per_box)}</dd></div>
-                      <div><dt className="text-slate-500">Por dia</dt><dd className="mt-1 font-semibold">{formatStockQuantity(stock?.tablets_per_day)}</dd></div>
+                      <div><dt className="text-slate-500">Por caixa / frasco</dt><dd className="mt-1 font-semibold">{formatStockQuantity(stock?.quantity_per_package)}</dd></div>
+                      <div><dt className="text-slate-500">Por dia</dt><dd className="mt-1 font-semibold">{formatStockQuantity(stock?.daily_quantity)}</dd></div>
                     </dl>
+                    {negative && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-800">Faltam {formatStockQuantity(Math.abs(stock.quantity!))} {unitLabel(stock.unit)} no saldo registrado. A tomada foi preservada; confira o estoque físico.</p>}
                     <StockForecast stock={stock} />
                   </>}
                   <Button type="button" variant="outline" disabled={unavailable || saving} onClick={() => openStock(medicine)} aria-label={`${canEdit ? "Configurar" : "Consultar"} estoque de ${medicine.name}`} className="mt-4 h-11 w-full rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50">
@@ -188,18 +195,24 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
             <DialogTitle className="text-xl">{canEdit ? "Configurar estoque" : "Consultar estoque"}</DialogTitle>
             <DialogDescription className="break-words">{selected?.name}</DialogDescription>
           </DialogHeader>
-          {canEdit ? <form onSubmit={saveStock} className="grid min-w-0 gap-5">
-            <p className="text-sm leading-6 text-slate-600">Informe quantos comprimidos você tem hoje. Deixe em branco o que ainda não souber. Use 0 somente quando o estoque estiver esgotado.</p>
+          {canEdit ? <form onSubmit={saveStock} className="grid min-w-0 grid-cols-1 gap-5">
+            <p className="text-sm leading-6 text-slate-600">Informe o saldo físico atual, incluindo reposições. Use 0 para estoque esgotado. O consumo por dia é calculado pelas rotinas diárias ativas; para vários horários, cadastre uma rotina para cada horário.</p>
             <fieldset disabled={saving} className="grid min-w-0 gap-4">
+              <div className="grid gap-2"><Label htmlFor="stock-unit">Unidade do estoque</Label>
+                <select id="stock-unit" className="h-11 w-full min-w-0 rounded-xl border bg-white px-3" value={draft.unit} disabled={!!(selected && stocks[selected.id]?.unit)} onChange={e=>setDraft(current=>({...current,unit:e.target.value as QuantityUnit}))}>
+                  <option value="tablet">Comprimidos</option><option value="ml">ml</option>
+                </select>
+                <p className="text-xs text-slate-500">Use a mesma unidade nas rotinas. Não há conversão entre comprimidos e ml.</p>
+              </div>
               {stockFields.map(({ key, label, min }) => <div key={key} className="grid min-w-0 gap-2">
                 <Label htmlFor={`stock-${key}`}>{label}</Label>
-                <Input id={`stock-${key}`} name={key} type="number" inputMode="numeric" min={min} max={2_147_483_647} step={1} value={draft[key]} placeholder="Não informado" aria-invalid={!!errors[key]} aria-describedby={errors[key] ? `stock-${key}-error` : key === "tablets_per_day" ? "stock-daily-help" : undefined}
+                <Input id={`stock-${key}`} name={key} type="number" inputMode="decimal" min={min} max={999999999.999} step={0.001} required={key==="quantity" && selectedId!==null && stocks[selectedId]?.quantity!=null} value={draft[key]} placeholder="Não informado" aria-invalid={!!errors[key]} aria-describedby={errors[key] ? `stock-${key}-error` : undefined}
                   onChange={event => { setDraft(current => ({ ...current, [key]: event.target.value })); setErrors(current => ({ ...current, [key]: undefined })); setSaveError(""); }} className="h-11 rounded-xl" />
-                {key === "tablets_per_day" && <p id="stock-daily-help" className="text-xs leading-5 text-slate-500">Total de comprimidos utilizados ao longo de um dia, conforme sua orientação de uso.</p>}
+
                 {errors[key] && <p id={`stock-${key}-error`} className="text-sm text-red-700">{errors[key]}</p>}
               </div>)}
             </fieldset>
-            <div aria-live="polite"><StockForecast stock={preview ? { ...parsed.values, ...preview } : undefined} preview /></div>
+            <StockForecast stock={selected ? stocks[selected.id] : undefined} />
             {saveError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
             {Object.keys(errors).some(key => !!errors[key as keyof StockErrors]) && <p role="alert" className="text-sm text-red-700">Confira os campos indicados antes de salvar.</p>}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -220,14 +233,14 @@ export function MedicationInventory({ medicines, user, dataLoading }: {
   );
 }
 
-function StockForecast({stock, preview = false}: {stock?: {total_tablets: number | null; tablets_per_day: number | null; estimated_days: number | null; full_days_covered: number | null}; preview?: boolean}) {
+function StockForecast({stock}: {stock?: Inventory}) {
   const days = stock?.estimated_days;
   return <div className="mt-auto rounded-xl bg-slate-50 p-3">
-    <p className="text-xs font-semibold text-slate-500">{preview ? "Prévia da duração" : "Duração estimada"}</p>
+    <p className="text-xs font-semibold text-slate-500">Duração estimada</p>
     <p className="mt-1 text-lg font-bold text-blue-800">{formatStockDuration(days)}</p>
     <p className="mt-1 text-xs leading-5 text-slate-500">{days == null
-      ? "Informe o total disponível e o consumo diário para calcular."
-      : `${formatStockQuantity(stock?.total_tablets)} comprimidos ÷ ${formatStockQuantity(stock?.tablets_per_day)} por dia`}</p>
+      ? "Informe o saldo e configure as quantidades nas rotinas diárias ativas. Outras frequências ficam sem previsão."
+      : `${formatStockQuantity(stock?.quantity)} ${unitLabel(stock?.unit)} ÷ ${formatStockQuantity(stock?.daily_quantity)} por dia`}</p>
     {days != null && !Number.isInteger(days) && <p className="mt-1 text-xs font-medium text-slate-600">{stock?.full_days_covered} {stock?.full_days_covered === 1 ? "dia completo coberto" : "dias completos cobertos"}</p>}
   </div>;
 }
