@@ -22,7 +22,7 @@ Sistema web responsivo para cadastrar medicamentos, organizar rotinas e acompanh
 
 - React 19, TypeScript, Vinext e Vite
 - Tailwind CSS
-- Supabase
+- Neon PostgreSQL, Neon Auth e Data API
 - Tesseract.js
 - Capacitor para Android
 - PHP como integração opcional de backend
@@ -30,10 +30,10 @@ Sistema web responsivo para cadastrar medicamentos, organizar rotinas e acompanh
 
 ## Requisitos
 
-- Node.js 22 ou superior
-- pnpm 11 ou superior
+- Node.js >=22.13
+- pnpm 11.25.0 (via Corepack)
 - Git
-- Projeto configurado no Supabase
+- Branch Neon de desenvolvimento com Auth, Data API e migrações configurados
 
 Para gerar o aplicativo Android, também são necessários Android Studio, Android SDK e Java/JDK compatível com o Gradle do projeto.
 
@@ -54,17 +54,31 @@ pnpm build
 
 Os arquivos estáticos são gerados em `dist/client`.
 
-## Configuração do Supabase
+## Configuração do Neon
 
-A estrutura do banco está disponível em:
+Esta branch prepara a migração completa para Neon. A versão publicada continua
+no Supabase até revisão e autorização do corte. Consulte o procedimento em
+[docs/MIGRACAO_NEON.md](docs/MIGRACAO_NEON.md) antes de importar dados.
 
-```text
-supabase/migrations/202609150001_medication_control.sql
+Consulte a [revisão e os testes](docs/VALIDACAO_NEON.md) e a
+[sequência de implementação do estoque](docs/PLANO_ESTOQUE.md).
+
+Para desenvolver, configure um arquivo local `.env.local` (ignorado pelo Git):
+
+```dotenv
+VITE_NEON_AUTH_URL=https://SEU_HOST_DE_AUTH/neondb/auth
+VITE_NEON_DATA_API_URL=https://SEU_HOST_DE_API/neondb/rest/v1
+# Opcional: mantém o atalho de login "visualizador". Este valor fica público no bundle.
+# VITE_VIEWER_LOGIN_EMAIL=email-da-conta-visualizadora
 ```
 
-Execute essa migração no SQL Editor do projeto Supabase antes de utilizar o sistema.
+O frontend usa somente URLs públicas. Senhas de banco, `NEON_API_KEY` e
+`SUPABASE_ACCESS_TOKEN` pertencem exclusivamente às ferramentas administrativas.
+No Neon, habilite Auth e Data API sem grants amplos antes de importar o esquema.
+O cadastro verifica o e-mail por código; a recuperação de senha também usa código.
 
-A aplicação utiliza uma chave pública do Supabase no frontend. Nunca exponha uma chave `service_role` ou qualquer chave secreta no código do navegador.
+O frontend consulta diretamente o Data API. A integração PHP opcional usa
+`NEON_DATA_API_URL` no servidor e repassa o JWT do usuário. Ela não usa chave administrativa.
 
 ## Publicação na Vercel
 
@@ -81,6 +95,9 @@ A aplicação utiliza uma chave pública do Supabase no frontend. Nunca exponha 
 Versão em produção: [https://minha-medicacao.vercel.app](https://minha-medicacao.vercel.app)
 
 Novos commits enviados para a branch `master` geram automaticamente um novo deployment.
+As variáveis `VITE_NEON_AUTH_URL` e `VITE_NEON_DATA_API_URL` são incorporadas no
+build; devem corresponder ao ambiente escolhido. Não apontar produção para a
+branch de fixtures. A mudança exige novo build web e nova sincronização Android.
 
 ## Android
 
@@ -97,9 +114,10 @@ Consulte também [ANDROID_BUILD.md](ANDROID_BUILD.md) e [GUIA_ANDROID_WINDOWS.md
 ```text
 app/                    Interface e páginas da aplicação
 components/             Componentes visuais
-lib/                    Supabase, OCR e notificações
+lib/                    Neon, OCR e notificações
 public/                 Arquivos públicos
-supabase/migrations/    Estrutura do banco de dados
+neon/migrations/        Estrutura, vínculos de contas e RLS no Neon
+supabase/migrations/    Histórico da estrutura de origem (preservado)
 api/                    Integração opcional em PHP
 android/                Projeto Android do Capacitor
 scripts/                Scripts de instalação e build

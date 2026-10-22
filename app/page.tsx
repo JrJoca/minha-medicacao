@@ -1,7 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import type { User } from "@supabase/supabase-js";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlarmClock,
   BellRing,
@@ -49,7 +48,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { supabase } from "@/lib/supabase";
+import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
 import { syncRoutineNotifications } from "@/lib/native-notifications";
 import {
   emptyPrescriptionDraft,
@@ -83,11 +82,15 @@ const initialRoutines: Routine[] = [];
 export default function Home() {
   const [medicines, setMedicines] = useState(initialMedicines);
   const [routines, setRoutines] = useState(initialRoutines);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<ApplicationUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "verify" | "recover" | "reset">("login");
+  const [pendingAuthEmail, setPendingAuthEmail] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authRefresh, setAuthRefresh] = useState(0);
+  const authRevision = useRef(0);
   const [routineOpen, setRoutineOpen] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
   const [medicineOpen, setMedicineOpen] = useState(false);
@@ -136,7 +139,7 @@ export default function Home() {
     const now = new Date();
     return now.getHours() * 60 + now.getMinutes();
   });
-  const isViewer = user?.app_metadata?.role === "viewer";
+  const isViewer = user?.role === "viewer";
   const viewerMutationBlocked = () => {
     if (!isViewer) return false;
     setNotice("Perfil visualizador: alterações não são permitidas.");
@@ -169,7 +172,7 @@ export default function Home() {
       return {
         routine,
         intake,
-        status: intake ? "taken" : reportIsToday ? "pending" : "missed",
+        status: (intake ? "taken" : reportIsToday ? "pending" : "missed") as "taken" | "pending" | "missed",
       };
     });
   const reportTaken = reportRows.filter((row) => row.status === "taken").length;
@@ -193,28 +196,30 @@ export default function Home() {
           date,
           routine,
           intake,
-          status: intake ? "taken" : isToday ? "pending" : "missed",
+          status: (intake ? "taken" : isToday ? "pending" : "missed") as "taken" | "pending" | "missed",
         };
       }),
     );
 
   const loadData = useCallback(async () => {
+    const revision = authRevision.current;
     setDataLoading(true);
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const [medicineResult, routineResult, linkResult, intakeResult] =
       await Promise.all([
-        supabase
+        getBackend()
           .from("medications")
           .select("id,name,dosage,reference_url")
           .order("created_at"),
-        supabase.from("medication_routines").select("*").order("created_at"),
-        supabase.from("routine_medications").select("routine_id,medication_id"),
-        supabase
+        getBackend().from("medication_routines").select("*").order("created_at"),
+        getBackend().from("routine_medications").select("routine_id,medication_id"),
+        getBackend()
           .from("medication_intakes")
           .select("routine_id,taken_at")
           .gte("taken_at", startOfDay.toISOString()),
       ]);
+    if (revision !== authRevision.current) return;
     const error =
       medicineResult.error ||
       routineResult.error ||
@@ -260,30 +265,57 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user || null);
-      setAuthLoading(false);
-      if (data.session) loadData();
-    });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
-      if (session) setTimeout(loadData, 0);
-      else {
-        setMedicines([]);
-        setRoutines([]);
+    let active = true;
+    let unsubscribe = () => {};
+    const syncIdentity = async (identity: { id: string; email?: string } | null) => {
+      if (!active) return;
+      const revision = ++authRevision.current;
+      setUser(null);
+      setMedicines([]);
+      setRoutines([]);
+      setReportIntakes([]);
+      setHistoryIntakes([]);
+      setReportOpen(false);
+      setDataLoading(false);
+      try {
+        if (!identity) return;
+        const account = await resolveApplicationUser(identity);
+        if (!active || revision !== authRevision.current) return;
+        setUser(account);
+        void loadData();
+      } catch (error) {
+        if (active && revision === authRevision.current) {
+          setAuthNotice(error instanceof Error ? error.message : "Não foi possível verificar a conta.");
+        }
+      } finally {
+        if (active && revision === authRevision.current) setAuthLoading(false);
+      }
+    };
+    void Promise.resolve().then(async () => {
+      try {
+        if (!active) return;
+        setWhatsAppPhone(localStorage.getItem("medication-whatsapp-phone") || "");
+        setIncludeMedicineNames(localStorage.getItem("medication-whatsapp-medicines") !== "false");
+        const auth = getBackend().auth;
+        const { data: { subscription } } = auth.onAuthStateChange((_event, session) => {
+          queueMicrotask(() => { void syncIdentity(session?.user ?? null); });
+        });
+        unsubscribe = () => subscription.unsubscribe();
+        const revision = authRevision.current;
+        const { data, error } = await auth.getSession();
+        if (error) throw error;
+        if (active && revision === authRevision.current) await syncIdentity(data.session?.user ?? null);
+      } catch (error) {
+        if (!active) return;
+        setAuthNotice(error instanceof Error ? error.message : "Não foi possível conectar. Tente novamente.");
+        setAuthLoading(false);
       }
     });
-    return () => subscription.unsubscribe();
-  }, [loadData]);
-
-  useEffect(() => {
-    setWhatsAppPhone(localStorage.getItem("medication-whatsapp-phone") || "");
-    setIncludeMedicineNames(
-      localStorage.getItem("medication-whatsapp-medicines") !== "false",
-    );
-  }, []);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [loadData, authRefresh]);
 
   useEffect(() => {
     const updateCurrentTime = () => {
@@ -309,16 +341,18 @@ export default function Home() {
   }, [user, dataLoading, routines]);
 
   async function loadReport(dateKey: string) {
+    const revision = authRevision.current;
     const start = new Date(`${dateKey}T00:00:00`);
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
     setReportLoading(true);
-    const { data, error } = await supabase
+    const { data, error } = await getBackend()
       .from("medication_intakes")
       .select("id,routine_id,taken_at")
       .gte("taken_at", start.toISOString())
       .lt("taken_at", end.toISOString())
       .order("taken_at");
+    if (revision !== authRevision.current) return;
     setReportLoading(false);
     if (error) {
       setReportIntakes([]);
@@ -329,16 +363,18 @@ export default function Home() {
   }
 
   async function loadHistory(startKey = historyStart, endKey = historyEnd) {
+    const revision = authRevision.current;
     const start = new Date(`${startKey}T00:00:00`);
     const end = new Date(`${endKey}T00:00:00`);
     end.setDate(end.getDate() + 1);
     setHistoryLoading(true);
-    const { data, error } = await supabase
+    const { data, error } = await getBackend()
       .from("medication_intakes")
       .select("id,routine_id,taken_at")
       .gte("taken_at", start.toISOString())
       .lt("taken_at", end.toISOString())
       .order("taken_at", { ascending: false });
+    if (revision !== authRevision.current) return;
     setHistoryLoading(false);
     if (error) {
       setHistoryIntakes([]);
@@ -373,8 +409,8 @@ export default function Home() {
       .map((value) => String(value).padStart(2, "0"))
       .join(":");
     const { error } = intake
-      ? await supabase.from("medication_intakes").delete().eq("id", intake.id)
-      : await supabase.from("medication_intakes").insert({
+      ? await getBackend().from("medication_intakes").delete().eq("id", intake.id)
+      : await getBackend().from("medication_intakes").insert({
           user_id: user.id,
           routine_id: routine.id,
           taken_at: new Date(`${date}T${currentTime}`).toISOString(),
@@ -402,7 +438,7 @@ export default function Home() {
     const targetStart = new Date(`${correctedDate}T00:00:00`);
     const targetEnd = new Date(targetStart);
     targetEnd.setDate(targetEnd.getDate() + 1);
-    const { data: existing } = await supabase
+    const { data: existing } = await getBackend()
       .from("medication_intakes")
       .select("id")
       .eq("routine_id", routine.id)
@@ -416,11 +452,11 @@ export default function Home() {
       return;
     }
     const query = intake
-      ? supabase
+      ? getBackend()
           .from("medication_intakes")
           .update({ taken_at: correctedAt.toISOString() })
           .eq("id", intake.id)
-      : supabase.from("medication_intakes").insert({
+      : getBackend().from("medication_intakes").insert({
           user_id: user.id,
           routine_id: routine.id,
           taken_at: correctedAt.toISOString(),
@@ -464,30 +500,83 @@ export default function Home() {
 
   async function authenticate(
     e: FormEvent<HTMLFormElement>,
-    mode: "login" | "signup",
+    mode: typeof authMode,
   ) {
     e.preventDefault();
     setAuthNotice("");
     const d = new FormData(e.currentTarget);
-    const login = String(d.get("email")).trim();
-    const email =
-      mode === "login" && login.toLowerCase() === "visualizador"
-        ? "visualizador@minha-medicacao.local"
-        : login;
-    const password = String(d.get("password"));
-    const result =
-      mode === "login"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
-    if (result.error) {
-      setAuthNotice(result.error.message);
-      return;
+    setAuthBusy(true);
+    try {
+      const email = ["verify", "reset"].includes(mode) ? pendingAuthEmail : loginEmail(String(d.get("email") || ""));
+      const password = String(d.get("password") || "");
+      const otp = String(d.get("otp") || "").trim();
+      const auth = getBackend().auth;
+      if (mode === "recover") {
+        const result = await getPasswordAuth().emailOtp.sendVerificationOtp({ email, type: "forget-password" });
+        if (result.error) throw result.error;
+        setPendingAuthEmail(email);
+        setAuthMode("reset");
+        setAuthNotice("Se a conta existir, um código será enviado ao e-mail informado.");
+      } else if (mode === "reset") {
+        const result = await getPasswordAuth().emailOtp.resetPassword({ email, otp, password });
+        if (result.error) throw result.error;
+        await auth.signOut();
+        setAuthMode("login");
+        setAuthNotice("Senha definida. Entre com a nova senha.");
+      } else if (mode === "verify") {
+        const result = await getPasswordAuth().emailOtp.verifyEmail({ email, otp });
+        if (result.error) throw result.error;
+        setAuthMode("login");
+        setAuthNotice("E-mail confirmado. Entre com sua senha.");
+        setAuthRefresh((value) => value + 1);
+      } else {
+        // O adaptador exige uma sessão no signUp; o cadastro com verificação
+        // obrigatória usa a API nativa e só autentica após confirmar o e-mail.
+        if (mode === "signup") {
+          const result = await getPasswordAuth().signUp.email({ email, password, name: "" });
+          if (result.error) throw result.error;
+          setPendingAuthEmail(email);
+          setAuthMode("verify");
+          setAuthNotice("Conta criada. Informe o código de confirmação recebido por e-mail.");
+          return;
+        }
+        const result = await auth.signInWithPassword({ email, password });
+        if (result.error) {
+          if (["EMAIL_NOT_VERIFIED", "email_not_confirmed"].includes(result.error.code || "")) {
+            setPendingAuthEmail(email);
+            setAuthMode("verify");
+            setAuthNotice("Confirme seu e-mail com o código recebido. Você pode solicitar um novo código abaixo.");
+            return;
+          }
+          throw result.error;
+        }
+        // O adaptador beta não emite todas as mudanças na própria aba.
+        setAuthRefresh((value) => value + 1);
+      }
+    } catch (error) {
+      setAuthNotice(error instanceof Error ? error.message : "Não foi possível concluir. Confira os dados e tente novamente.");
+    } finally {
+      setAuthBusy(false);
     }
-    setAuthNotice(
-      mode === "signup" && !result.data.session
-        ? "Conta criada. Confirme o e-mail recebido e depois entre no sistema."
-        : "Acesso autorizado.",
-    );
+  }
+
+  async function resendVerification() {
+    setAuthBusy(true);
+    try {
+      const result = await getPasswordAuth().emailOtp.sendVerificationOtp({ email: pendingAuthEmail, type: "email-verification" });
+      if (result.error) throw result.error;
+      setAuthNotice("Um novo código de confirmação foi solicitado.");
+    } catch {
+      setAuthNotice("Não foi possível reenviar o código. Aguarde e tente novamente.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function signOut() {
+    const { error } = await getBackend().auth.signOut();
+    if (error) setNotice("Não foi possível sair. Tente novamente.");
+    else setAuthRefresh((value) => value + 1);
   }
 
   async function addMedicine(e: FormEvent<HTMLFormElement>) {
@@ -501,7 +590,7 @@ export default function Home() {
       dosage: String(d.get("dosage")),
       reference_url: String(d.get("link") || "") || null,
     };
-    const { data, error } = await supabase
+    const { data, error } = await getBackend()
       .from("medications")
       .insert(payload)
       .select("id,name,dosage,reference_url")
@@ -600,7 +689,7 @@ export default function Home() {
       return;
     }
     setBulkSaving(true);
-    const { data, error } = await supabase
+    const { data, error } = await getBackend()
       .from("medications")
       .insert(
         validDrafts.map((item) => ({
@@ -683,7 +772,7 @@ export default function Home() {
       updated_at: new Date().toISOString(),
     };
     if (editingRoutine) {
-      const { error } = await supabase
+      const { error } = await getBackend()
         .from("medication_routines")
         .update(payload)
         .eq("id", editingRoutine.id);
@@ -691,7 +780,7 @@ export default function Home() {
         setNotice("Erro ao atualizar rotina: " + error.message);
         return;
       }
-      const { error: deleteLinkError } = await supabase
+      const { error: deleteLinkError } = await getBackend()
         .from("routine_medications")
         .delete()
         .eq("routine_id", editingRoutine.id);
@@ -699,7 +788,7 @@ export default function Home() {
         setNotice("Erro ao atualizar medicamentos: " + deleteLinkError.message);
         return;
       }
-      const { error: linkError } = await supabase
+      const { error: linkError } = await getBackend()
         .from("routine_medications")
         .insert(
           selected.map((medication_id) => ({
@@ -739,7 +828,7 @@ export default function Home() {
       setNotice("A rotina " + name + " foi atualizada.");
       return;
     }
-    const { data, error } = await supabase
+    const { data, error } = await getBackend()
       .from("medication_routines")
       .insert(payload)
       .select("id")
@@ -748,7 +837,7 @@ export default function Home() {
       setNotice("Erro ao salvar rotina: " + error.message);
       return;
     }
-    const { error: linkError } = await supabase
+    const { error: linkError } = await getBackend()
       .from("routine_medications")
       .insert(
         selected.map((medication_id) => ({
@@ -758,7 +847,7 @@ export default function Home() {
         })),
       );
     if (linkError) {
-      await supabase.from("medication_routines").delete().eq("id", data.id);
+      await getBackend().from("medication_routines").delete().eq("id", data.id);
       setNotice("Erro ao relacionar os medicamentos: " + linkError.message);
       return;
     }
@@ -807,7 +896,7 @@ export default function Home() {
     if (routine.taken) {
       const start = new Date();
       start.setHours(0, 0, 0, 0);
-      const { error } = await supabase
+      const { error } = await getBackend()
         .from("medication_intakes")
         .delete()
         .eq("routine_id", id)
@@ -817,7 +906,7 @@ export default function Home() {
         return;
       }
     } else {
-      const { data, error } = await supabase
+      const { data, error } = await getBackend()
         .from("medication_intakes")
         .insert({ user_id: user.id, routine_id: id })
         .select("taken_at")
@@ -892,7 +981,7 @@ export default function Home() {
     const routine = routines.find((r) => r.id === id);
     if (!routine) return;
     const paused = !routine.paused;
-    const { error } = await supabase
+    const { error } = await getBackend()
       .from("medication_routines")
       .update({
         status: paused ? "paused" : "active",
@@ -909,7 +998,7 @@ export default function Home() {
   }
   async function remove(id: string) {
     if (viewerMutationBlocked()) return;
-    const { error } = await supabase
+    const { error } = await getBackend()
       .from("medication_routines")
       .delete()
       .eq("id", id);
@@ -924,7 +1013,7 @@ export default function Home() {
   if (authLoading)
     return (
       <main className="grid min-h-screen place-items-center bg-[#f7f8fc]">
-        <p className="font-semibold text-slate-500">Conectando ao Supabase…</p>
+        <p className="font-semibold text-slate-500">Conectando à sua conta…</p>
       </main>
     );
   if (!user)
@@ -962,24 +1051,32 @@ export default function Home() {
               onSubmit={(e) => authenticate(e, authMode)}
               className="mt-5 grid gap-4"
             >
-              <Field
+              {!["verify", "reset"].includes(authMode) && <Field
                 id="email"
                 label={authMode === "login" ? "Usuário ou e-mail" : "E-mail"}
                 type={authMode === "login" ? "text" : "email"}
                 placeholder={
                   authMode === "login" ? "Seu usuário ou e-mail" : "seu@email.com"
                 }
-              />
-              <Field
+              />}
+              {["verify", "reset"].includes(authMode) && <>
+                <p className="text-sm text-slate-600">Código enviado para {pendingAuthEmail}</p>
+                <Field id="otp" label="Código do e-mail" placeholder="Código de confirmação" />
+              </>}
+              {["login", "signup", "reset"].includes(authMode) && <Field
                 id="password"
-                label="Senha"
+                label={authMode === "reset" ? "Nova senha" : "Senha"}
                 type="password"
-                placeholder="Mínimo de 6 caracteres"
-              />
-              <Button className="mt-1 h-12 rounded-xl bg-blue-600">
-                {authMode === "login" ? "Entrar no sistema" : "Criar conta"}
+                placeholder="Mínimo de 8 caracteres"
+              />}
+              <Button disabled={authBusy} className="mt-1 h-12 rounded-xl bg-blue-600">
+                {authBusy ? "Aguarde…" : { login: "Entrar no sistema", signup: "Criar conta", verify: "Confirmar e-mail", recover: "Enviar código", reset: "Definir nova senha" }[authMode]}
               </Button>
             </form>
+            {authMode === "verify" && <Button type="button" variant="ghost" disabled={authBusy} onClick={resendVerification}>Reenviar código</Button>}
+            <Button type="button" variant="ghost" disabled={authBusy} className="mt-2" onClick={() => { setAuthNotice(""); setAuthMode(authMode === "recover" || authMode === "reset" || authMode === "verify" ? "login" : "recover"); }}>
+              {["recover", "reset", "verify"].includes(authMode) ? "Voltar para entrar" : "Primeiro acesso ou esqueci a senha"}
+            </Button>
             {authNotice && (
               <p className="mt-4 rounded-xl bg-blue-50 p-3 text-sm font-medium text-blue-800">
                 {authNotice}
@@ -987,7 +1084,7 @@ export default function Home() {
             )}
             <p className="mt-5 text-xs leading-5 text-slate-400">
               Os dados ficam vinculados à sua conta e protegidos pelas regras de
-              acesso do Supabase.
+              acesso da aplicação.
             </p>
           </CardContent>
         </Card>
@@ -1011,7 +1108,7 @@ export default function Home() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => supabase.auth.signOut()}
+              onClick={signOut}
               className="shrink-0 sm:hidden"
               aria-label="Sair da conta"
             >
@@ -1022,7 +1119,7 @@ export default function Home() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => supabase.auth.signOut()}
+              onClick={signOut}
               className="hidden sm:inline-flex"
               aria-label="Sair da conta"
             >

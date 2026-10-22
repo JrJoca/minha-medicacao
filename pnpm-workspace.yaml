@@ -4,6 +4,8 @@ minimumReleaseAgeIgnoreMissingTime: false
 trustLockfile: false
 strictDepBuilds: true
 allowBuilds:
+  # O postinstall só imprime um banner de financiamento; não é necessário ao SDK.
+  core-js: false
   esbuild: true
   fsevents: true
   sharp: true
