@@ -4,6 +4,24 @@ Escopo solicitado em 22/10/2026: ampliar o banco para total de comprimidos,
 comprimidos por caixa e consumo diário, mantendo o cadastro atual do medicamento.
 O usuário confirmou a validação das duas contas e colocou o Android como última etapa.
 
+## Estado da entrega
+
+- Aplicada no Neon de produção em 22/10/2026 às 16:45 (America/Sao_Paulo).
+- Versão `202610220003_medication_stock`, checksum
+  `efc465bb11b33be6d367bcfd6e80f2dbe08186e7512d0a97ae75df25bc1fc664`.
+- Branch privada de recuperação sem endpoint: `br-lively-recipe-b515t3y3`;
+  snapshot local privado verificado. Nenhum arquivo de backup foi versionado.
+- Comparação na transação confirmou a preservação dos registros existentes.
+- RLS habilitado, quatro políticas e acesso anônimo bloqueado; nenhum medicamento
+  foi preenchido automaticamente com estoque.
+- 69 testes aprovados; instalação congelada, TypeScript e build passaram.
+  Lint passou com um aviso preexistente de imagem.
+- Ensaio remoto e API real com fixtures confirmaram 10 / 2 = 5, dias parciais,
+  visualizador somente leitura e isolamento de contas. Nenhuma escrita de teste
+  foi feita em dados de pacientes.
+- Interface e cadastro de medicamento preservados. Configuração visual, compras,
+  baixas e estornos continuam como próximas entregas.
+
 ## Modelo e cálculo
 
 `public.medication_stock` complementa `public.medications`, com no máximo um
