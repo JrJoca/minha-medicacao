@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
@@ -335,4 +336,114 @@ test('recusa roles de API preexistentes que possam contornar o RLS', async () =>
   } finally {
     await isolated.close();
   }
+});
+
+const cutoverScript = fileURLToPath(new URL('../scripts/neon-cutover.py', import.meta.url));
+const frozenAt = '2026-10-21T00:00:00+00:00';
+function finalPlan(previous, final, operation = 'finalize') {
+  return JSON.parse(execFileSync('python3', ['-c', `
+import importlib.util,json,sys,hashlib
+spec=importlib.util.spec_from_file_location('c',sys.argv[1]);c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
+p,s=json.load(sys.stdin)
+def manifest(s):
+ raw=json.dumps(s).encode()
+ return raw,{'source_project':c.SOURCE,'exported_at':s['exported_at'],'sha256':hashlib.sha256(raw).hexdigest(),'counts':c.migration.validate_snapshot(s)}
+_,pm=manifest(p);raw,m=manifest(s)
+mapping={'accounts':[{'legacy_id':u['id'],'role':(u.get('raw_app_meta_data') or {}).get('role','owner'),'login_email':u['email']} for u in s['users']]}
+if sys.argv[2]=='finalize': plan=c.finalization_queries(p,pm,s,m,raw,mapping,sys.argv[3])
+else: plan=c.activation_queries(m['sha256'],sys.argv[3],'a'*40)
+print(json.dumps(plan))
+`, cutoverScript, operation, frozenAt], { input: JSON.stringify([previous, final]), encoding: 'utf8' }));
+}
+
+function finalFixtures() {
+  const previous = structuredClone(snapshot);
+  previous.users = previous.users.slice(0, 2);
+  previous.medications = previous.medications.slice(0, 1);
+  const final = structuredClone(previous);
+  final.exported_at = '2026-10-22T00:00:00+00:00';
+  final.medications[0].dosage = 'Alteração entre preparação e corte';
+  final.medications.push(medicine(12, 1));
+  final.medication_intakes.push({ ...final.medication_intakes[0], id: id(32), taken_at: final.exported_at });
+  return [previous, final];
+}
+
+async function verifiedPrepared(database, fixture) {
+  await bootstrap(database);
+  await importSnapshot(database, cutoverPlan(fixture));
+  for (const n of [1, 2]) await database.query('INSERT INTO neon_auth."user" VALUES($1,$2,true,false)', [id(100 + n), fixture.users[n - 1].email]);
+}
+
+test('barreira bloqueia todas as mutações, mantém leitura e pode ser revertida antes da ativação', async () => {
+  const isolated = new PGlite();
+  try {
+    await bootstrap(isolated);
+    await importSnapshot(isolated);
+    await isolated.exec("CREATE TABLE unrelated_data(value text); INSERT INTO unrelated_data VALUES('Preservar')");
+    await isolated.exec(readFileSync(new URL('../neon/cutover/freeze-supabase.sql', import.meta.url), 'utf8'));
+    for (const table of ['medications', 'medication_routines', 'routine_medications', 'medication_intakes']) {
+      for (const sql of [`DELETE FROM public.${table}`, `UPDATE public.${table} SET user_id=user_id`, `INSERT INTO public.${table} SELECT * FROM public.${table} WHERE false`, `TRUNCATE public.${table} CASCADE`]) {
+        await assert.rejects(isolated.exec(sql), { code: '55000' });
+      }
+    }
+    assert.equal((await isolated.query('SELECT count(*)::integer AS n FROM public.medications')).rows[0].n, 3);
+    assert.deepEqual((await isolated.query('SELECT * FROM unrelated_data')).rows, [{ value: 'Preservar' }]);
+    await isolated.exec(readFileSync(new URL('../neon/cutover/unfreeze-supabase.sql', import.meta.url), 'utf8'));
+    await isolated.exec('UPDATE public.medications SET dosage=dosage');
+    assert.equal((await isolated.query("SELECT to_regnamespace('medication_cutover_private') AS s")).rows[0].s, null);
+  } finally { await isolated.close(); }
+});
+
+test('sincronização final preserva deltas, liga logins e só abre escritas na ativação', async () => {
+  const isolated = new PGlite();
+  const [previous, final] = finalFixtures();
+  try {
+    await verifiedPrepared(isolated, previous);
+    await importSnapshot(isolated, finalPlan(previous, final));
+    const state = (await isolated.query('SELECT phase FROM application_private.cutover_control')).rows[0];
+    assert.equal(state.phase, 'prepared');
+    assert.equal((await isolated.query('SELECT count(*)::integer AS n FROM application_private.source_backups')).rows[0].n, 2);
+    assert.equal((await isolated.query('SELECT count(*)::integer AS n FROM public.medication_intakes')).rows[0].n, 2);
+    await isolated.query("SELECT set_config('request.jwt.claim.sub',$1,false)", [id(101)]);
+    await isolated.exec('SET ROLE authenticated');
+    assert.equal((await isolated.query('SELECT * FROM public.application_context()')).rows[0].user_id, id(1));
+    await assert.rejects(isolated.exec('UPDATE public.medications SET dosage=dosage'), { code: '42501' });
+    await isolated.exec('RESET ROLE');
+    await importSnapshot(isolated, finalPlan(previous, final, 'activate'));
+    assert.equal((await isolated.query('SELECT phase FROM application_private.cutover_control')).rows[0].phase, 'active');
+    await isolated.exec('SET ROLE authenticated');
+    assert.equal((await isolated.query('UPDATE public.medications SET dosage=dosage RETURNING id')).rows.length, 2);
+    await isolated.exec('RESET ROLE');
+    await isolated.query("SELECT set_config('request.jwt.claim.sub',$1,false)", [id(102)]);
+    await isolated.exec('SET ROLE authenticated');
+    assert.equal((await isolated.query('SELECT * FROM public.application_context()')).rows[0].role, 'viewer');
+    assert.equal((await isolated.query('UPDATE public.medications SET dosage=dosage RETURNING id')).rows.length, 0);
+    await isolated.exec('RESET ROLE');
+    await assert.rejects(importSnapshot(isolated, finalPlan(previous, final, 'activate')), { code: '22012' });
+  } finally { await isolated.close(); }
+});
+
+test('divergência no destino preparado impede sincronização sem apagar registros', async () => {
+  const isolated = new PGlite();
+  const [previous, final] = finalFixtures();
+  try {
+    await verifiedPrepared(isolated, previous);
+    await isolated.query('UPDATE public.medications SET dosage=$1', ['Alteração inesperada no destino']);
+    await assert.rejects(importSnapshot(isolated, finalPlan(previous, final)), { code: '22012' });
+    assert.equal((await isolated.query('SELECT dosage FROM public.medications')).rows[0].dosage, 'Alteração inesperada no destino');
+    assert.equal((await isolated.query('SELECT count(*)::integer AS n FROM application_private.accounts WHERE auth_subject IS NOT NULL')).rows[0].n, 0);
+  } finally { await isolated.close(); }
+});
+
+test('ativação reverte grants se encontrar divergência na cópia final', async () => {
+  const isolated = new PGlite();
+  const [previous, final] = finalFixtures();
+  try {
+    await verifiedPrepared(isolated, previous);
+    await importSnapshot(isolated, finalPlan(previous, final));
+    await isolated.exec('DELETE FROM public.medication_intakes');
+    await assert.rejects(importSnapshot(isolated, finalPlan(previous, final, 'activate')), { code: '22012' });
+    assert.equal((await isolated.query("SELECT has_table_privilege('authenticated','public.medications','INSERT') AS allowed")).rows[0].allowed, false);
+    assert.equal((await isolated.query('SELECT phase FROM application_private.cutover_control')).rows[0].phase, 'prepared');
+  } finally { await isolated.close(); }
 });

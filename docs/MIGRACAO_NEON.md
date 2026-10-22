@@ -14,7 +14,8 @@ produção depende da revisão e da ativação das contas.
   `codex-supabase-migration-20261021`.
 - Validação sintética isolada: `br-young-rain-b5wbapds`, chamada
   `codex-neon-validation-20261021`. Nunca usar como destino da produção.
-- Código de trabalho: `feat/neon-migration`; sem push ou deploy.
+- Código de trabalho: `feat/neon-migration`, publicado para preview. Estado do
+  corte e do destino final: [CORTE_NEON.md](CORTE_NEON.md).
 
 A branch de produção não recebe importação por estes scripts. O executor recusa
 branches default, protegidas ou identificadas como produção. A origem só recebe

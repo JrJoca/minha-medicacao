@@ -1,5 +1,8 @@
 # Revisão da migração para Neon
 
+Relatório da validação anterior ao início do corte. Para o estado atual em
+22/10/2026, consulte [CORTE_NEON.md](CORTE_NEON.md).
+
 Implementação na branch local `feat/neon-migration`, sobre `fca5b13d6b317182d64b0a97eb7f75e94670d1b6`. Sem push, merge ou deploy. A produção continua em https://minha-medicacao.vercel.app, usando Supabase.
 
 ## O que mudou
@@ -31,7 +34,7 @@ Implementação na branch local `feat/neon-migration`, sobre `fca5b13d6b317182d6
 
 | Verificação | Resultado |
 |---|---|
-| Suíte reproduzível `pnpm test:migration` | **33 aprovados**: 20 PostgreSQL/RLS/restauração/vinculação + 13 validações do executor. |
+| Suíte reproduzível `pnpm test:migration` | **50 aprovados**: 28 PostgreSQL/RLS/restauração/corte/build + 22 validações dos executores e da publicação. |
 | Cópia real para Neon de ensaio | Comparação exata das quatro tabelas e dos campos/IDs das contas no commit da importação. |
 | API real com JWT emitido pelo Neon | Proprietário, visualizador e outro proprietário: login, contexto com ID estável, leitura isolada e permissões de escrita corretas. |
 | Negativas da API | Sem token, token anônimo válido e token real com assinatura adulterada recusados. Viewer não insere, atualiza, exclui nem se promove por RPC. |

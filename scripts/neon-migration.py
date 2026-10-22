@@ -200,7 +200,7 @@ def split_sql(source):
     return statements
 
 
-def restoration_queries(snapshot, manifest):
+def snapshot_accounts(snapshot):
     accounts = []
     for user in snapshot["users"]:
         metadata = user.get("raw_app_meta_data") or {}
@@ -210,6 +210,11 @@ def restoration_queries(snapshot, manifest):
                          "access_role": metadata.get("role", "owner"),
                          "owner_user_id": metadata.get("owner_user_id") if metadata.get("role") == "viewer" else None,
                          "is_active": bool(active), "created_at": user["created_at"], "updated_at": user["updated_at"] or user["created_at"]})
+    return sorted(accounts, key=lambda account: account["id"])
+
+
+def restoration_queries(snapshot, manifest):
+    accounts = snapshot_accounts(snapshot)
     queries = [{"query": "SET LOCAL TIME ZONE 'UTC'", "params": []}]
     for filename in ("202610210001_medication_core.sql", "202610210002_account_registration.sql"):
         migration = CHECKOUT / "neon/migrations" / filename
