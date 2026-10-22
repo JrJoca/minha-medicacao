@@ -344,13 +344,20 @@ export default function Home() {
   }, [loadData, authRefresh]);
 
   useEffect(() => {
+    let day=localDateKey(new Date());
     const updateCurrentTime = () => {
       const now = new Date();
       setCurrentTimeInMinutes(now.getHours() * 60 + now.getMinutes());
+      const nextDay=localDateKey(now);
+      if(nextDay!==day) {
+        day=nextDay;
+        if(user) void loadData();
+        setInventoryRevision(v=>v+1);
+      }
     };
     const intervalId = window.setInterval(updateCurrentTime, 30_000);
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [loadData,user]);
 
   useEffect(
     () => () => {
@@ -819,6 +826,9 @@ export default function Home() {
   async function toggleTaken(id: string) {
     const routine=routines.find(r=>r.id===id);
     if (!routine) return;
+    if(routine.takenAt && localDateKey(new Date(routine.takenAt))!==localDateKey(new Date())) {
+      setNotice("O dia mudou. Atualizando a lista; confira a rotina antes de confirmar ou desfazer.");await loadData();return;
+    }
     const intake=routine.intakeId && routine.takenAt ? {id:routine.intakeId,routine_id:id,taken_at:routine.takenAt} : undefined;
     if (!await changeIntake(routine,routine.taken ? "undo" : "confirm",localDateKey(new Date()),intake)) return;
     await loadData();
