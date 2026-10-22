@@ -39,8 +39,8 @@ da base GitHub/Vercel.
 | 2 | [x] Concluir a transição completa para Neon | Cliente, banco, Auth e API publicados; duas contas vinculadas, backups e dados preservados. | Corte concluído; usuário confirmou acesso, dados e permissões das duas contas. |
 | 3 | [x] Base inicial de estoque no banco | Tabela separada com total, comprimidos por caixa, consumo diário e duração calculada; 10 / 2 = 5 dias. Cadastro e registros atuais preservados. | SQL/testes, ensaio e aplicação no destino final concluídos e registrados em ESTOQUE_BASE.md. Compras e movimentos continuam nas próximas etapas. |
 | 4 | [x] Permissões da base de estoque | Proprietário altera, viewer vinculado só consulta, outros usuários/anônimos não acessam. | Quatro políticas RLS e RPC com SECURITY INVOKER verificadas no ensaio e no destino final. Estender a proteção às futuras tabelas de movimentos. |
-| 5 | [ ] Configuração dos medicamentos legados | Exibir “Estoque não informado”, solicitar saldo físico atual e dose explícita, conservar textos e históricos. Criar lista de pendências de normalização. | Ausência de informação não vira zero; nenhuma baixa retroativa ou dose inferida. |
-| 6 | [ ] Configuração de estoque em fluxo separado | Preservar o cadastro atual do medicamento. Criar posteriormente fluxo para informar saldo físico, comprimidos por caixa e consumo diário. | Configuração explícita sem alterar o formulário atual; cálculo reproduz 10 / 2 = 5 dias. |
+| 5 | [x] Configuração dos medicamentos legados | Mostrar “Estoque não informado” e permitir informar saldo físico e consumo diário, conservando textos e históricos. | Interface preparada para revisão; ausência de informação não vira zero e não há baixa retroativa nem dose inferida. |
+| 6 | [x] Configuração de estoque em fluxo separado | Cadastro original preservado; formulário separado para saldo físico, comprimidos por caixa e consumo diário. | Salvar/recarregar no Neon sintético e exemplo 10 / 2 = 5 dias validados. Frontend preparado para revisão no PR #3. |
 | 7 | [ ] Compras, reposições e ajustes | Acrescentar entradas ao mesmo medicamento e permitir conciliação com origem/motivo e data auditáveis. | Saldo deriva de movimentos; retry não repete compra; histórico não é sobrescrito. |
 | 8 | [ ] Quantidade por medicamento na rotina | Informar comprimidos por tomada em cada vínculo; permitir doses diferentes numa rotina com vários medicamentos. | Quantidade positiva explícita; alteração futura não reescreve consumos antigos. |
 | 9 | [ ] Agenda estruturada e ocorrências | Representar frequência calculável, horários, duração/fim e pausas, separando data local da ocorrência de taken_at. Manter frequência textual antiga enquanto não configurada. | Recorrência e fuso têm regras documentadas; sem ocorrências ou faltas inventadas. |
@@ -48,7 +48,7 @@ da base GitHub/Vercel.
 | 11 | [ ] Desfazer e corrigir com auditoria | Registrar estorno ligado à baixa original; mudar data/hora sem nova baixa; compensar alterações de quantidade. | Estorno recompõe uma vez; conflito de ocorrência é tratado; registro legado sem baixa não aumenta saldo. |
 | 12 | [ ] Histórico preservado e arquivamento | Manter o retrato do medicamento/dose/quantidade na tomada e proteger fatos históricos de exclusões em cascata. | Editar ou arquivar rotina não apaga histórico contábil nem altera snapshots passados. |
 | 13 | [ ] Previsão de término | Simular próximas ocorrências de todas as rotinas do medicamento, respeitando saldo, doses já confirmadas, horários, pausas e fim. | Exibe última dose integralmente coberta e primeira ocorrência com falta; explica casos sem previsão. |
-| 14 | [ ] Painel/lista de estoque | Mostrar medicamentos, saldo, movimentações, consumo e datas previstas; ações de configurar estoque e repor; feedback após confirmação/estorno. | Uso mobile acessível; estados de desconhecido, zero, divergência e sem consumo distintos. |
+| 14 | [x] Painel básico de estoque | Cartões com saldo, comprimidos por caixa/dia e duração estimada; configurar, consultar e atualizar dados. | Interface mobile e estados desconhecido/zero/sem previsão validados. Movimentações, reposição auditada e datas por agenda continuam nas próximas entregas. |
 | 15 | [ ] Integrações e regressão web | Integrar relatório/histórico, manter OCR revisável, WhatsApp com horário persistido e envio manual e ordenação/próxima rotina. | Fluxos web existentes verificados; OCR não inventa estoque. Android fica na última etapa. |
 | 16 | [ ] Testes e apresentação das alterações | Executar testes de cálculo, RPC/RLS, concorrência, migração e interface; entregar diff, SQL, resultados e procedimento de implantação/compensação. | Evidência real, pendências explícitas e revisão antes de produção. |
 | 17 | [ ] Implantação controlada, após revisão | Fazer backup privado e verificar restauração; aplicar mudanças compatíveis, publicar versão aprovada e validar o resultado. | Autorização explícita para produção, SHA conferido e smoke seguro; sem escrita de testes em dados reais. |
@@ -84,8 +84,8 @@ Login/cadastro/logout e sessão; perfil visualizador; medicamentos e links; sele
 
 ## Validação e critérios de aceite
 
-Resultados iniciais de onboarding abaixo foram superados: 69 testes passam após
-a base de estoque, TypeScript/lint/build passam (lint com um aviso de imagem), e
+Resultados iniciais de onboarding abaixo foram superados: 77 testes passam após
+a base e a interface de estoque, TypeScript/lint/build passam (lint com um aviso de imagem), e
 Auth/Data API foram validados com fixtures Neon. As duas contas de produção foram
 confirmadas pelo usuário. APK permanece como última etapa. O histórico inicial
 fica registrado para comparação:

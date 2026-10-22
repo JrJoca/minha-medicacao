@@ -66,7 +66,8 @@ Consulte a [revisão e os testes](docs/VALIDACAO_NEON.md) e a
 
 A [base de estoque](docs/ESTOQUE_BASE.md) amplia o banco para total de comprimidos,
 comprimidos por caixa, consumo diário e duração calculada. O cadastro atual do
-medicamento permanece igual; a configuração pela interface será uma etapa posterior.
+medicamento permanece igual; a [interface de estoque](docs/ESTOQUE_INTERFACE.md)
+adiciona configuração separada nos cartões e está preparada para revisão.
 
 Para desenvolver, configure um arquivo local `.env.local` (ignorado pelo Git):
 

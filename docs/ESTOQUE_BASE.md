@@ -19,15 +19,16 @@ O usuário confirmou a validação das duas contas e colocou o Android como últ
 - Ensaio remoto e API real com fixtures confirmaram 10 / 2 = 5, dias parciais,
   visualizador somente leitura e isolamento de contas. Nenhuma escrita de teste
   foi feita em dados de pacientes.
-- Interface e cadastro de medicamento preservados. Configuração visual, compras,
-  baixas e estornos continuam como próximas entregas.
+- Cadastro de medicamento preservado. A configuração visual foi implementada
+  separadamente para revisão; veja `ESTOQUE_INTERFACE.md`. Compras, baixas e
+  estornos continuam como próximas entregas.
 
 ## Modelo e cálculo
 
 `public.medication_stock` complementa `public.medications`, com no máximo um
 registro por medicamento. A FK composta mantém o mesmo proprietário nos dois
 registros. O cadastro continua aceitando os campos anteriores, sem exigir estoque.
-Esta entrega não modifica a interface.
+A configuração visual separada está descrita em `ESTOQUE_INTERFACE.md`.
 
 | Campo | Significado |
 |---|---|
@@ -108,6 +109,6 @@ concluída, o cliente anterior continua compatível; deixar a nova tabela sem us
 antiga sobre novas gravações. Se houver necessidade de recuperação, preservar
 os dados novos e reconciliar os deltas antes de redirecionar a aplicação.
 
-A próxima interface deverá configurar o estoque separadamente do cadastro
+O frontend preparado para revisão configura o estoque separadamente do cadastro
 atual do medicamento. Compras, movimentos, doses por rotina, confirmação/estorno
 atômicos e previsão por agenda serão entregas posteriores. Android fica por último.

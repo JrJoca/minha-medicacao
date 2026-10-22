@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
 import { syncRoutineNotifications } from "@/lib/native-notifications";
+import { MedicationInventory } from "@/components/medication-inventory";
 import {
   emptyPrescriptionDraft,
   parsePrescriptionText,
@@ -609,7 +610,7 @@ export default function Home() {
       },
     ]);
     setMedicineOpen(false);
-    setNotice(data.name + " foi salvo no Supabase.");
+    setNotice(data.name + " foi salvo.");
   }
 
   function choosePrescription(file?: File) {
@@ -2334,51 +2335,7 @@ export default function Home() {
             note={medicines.length + " medicamentos cadastrados"}
           />
         </section>
-        <section className="mb-8">
-          <div className="mb-4">
-            <h2 className="text-xl font-bold">Medicamentos cadastrados</h2>
-            <p className="text-sm text-slate-500">
-              Lista completa de medicamentos e respectivas dosagens.
-            </p>
-          </div>
-          {medicines.length === 0 ? (
-            <Card className="rounded-3xl border-dashed border-slate-300 bg-white">
-              <CardContent className="p-6 text-sm text-slate-500">
-                Nenhum medicamento cadastrado.
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {medicines.map((medicine) => (
-                <Card key={medicine.id} className="rounded-2xl bg-white">
-                  <CardContent className="flex items-start gap-3 p-4">
-                    <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700">
-                      <Pill className="size-5" />
-                    </span>
-                    <div className="min-w-0">
-                      <h3 className="break-words font-extrabold text-slate-900">
-                        {medicine.name}
-                      </h3>
-                      <p className="mt-1 break-words text-sm text-slate-600">
-                        {medicine.dosage}
-                      </p>
-                      {medicine.link && (
-                        <a
-                          href={medicine.link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 block break-all text-sm font-semibold text-blue-700 hover:underline"
-                        >
-                          Ver referência
-                        </a>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </section>
+        <MedicationInventory key={user.authId} medicines={medicines} user={user} dataLoading={dataLoading} />
         <div className="mb-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div>
             <h2 className="text-xl font-bold">Rotinas de hoje</h2>
