@@ -1,9 +1,10 @@
 # Migração do Supabase para Neon
 
-O escopo inclui banco, autenticação e API. O aplicativo publicado continua usando
-Supabase enquanto a nova implementação é preparada e revisada. Esta branch implementa o novo cliente, login por Neon Auth, Data API, esquema,
-backup e restauração. A cópia dos dados já foi validada em ensaio; o corte de
-produção depende da revisão e da ativação das contas.
+O escopo inclui banco, autenticação e API. O corte autorizado foi concluído na
+aplicação web: Neon Auth, Data API e banco estão ativos em produção, com os IDs
+e dados preservados. As duas pessoas definiram senhas e verificaram os e-mails;
+os novos logins já estão vinculados às contas antigas. Consulte o registro
+operacional em [CORTE_NEON.md](CORTE_NEON.md).
 
 ## Ambientes e estado
 
@@ -14,12 +15,14 @@ produção depende da revisão e da ativação das contas.
   `codex-supabase-migration-20261021`.
 - Validação sintética isolada: `br-young-rain-b5wbapds`, chamada
   `codex-neon-validation-20261021`. Nunca usar como destino da produção.
-- Código de trabalho: `feat/neon-migration`, publicado para preview. Estado do
+- Código integrado pelo PR #1, commit `fb14c7f156d9ee356ce6ff6a6072110f550ab678`. Estado do
   corte e do destino final: [CORTE_NEON.md](CORTE_NEON.md).
 
-A branch de produção não recebe importação por estes scripts. O executor recusa
-branches default, protegidas ou identificadas como produção. A origem só recebe
-consultas `SELECT` por meio da Management API; não recebe DDL, UPDATE ou DELETE.
+`neon-migration.py` continua recusando restauração em branches default,
+protegidas ou de produção. `neon-cutover.py` é o executor separado do corte
+autorizado, restrito ao projeto/branch final. Na origem foram instalados apenas
+o controle privado e triggers que bloqueiam escritas nas quatro tabelas migradas;
+nenhuma linha de saúde foi alterada ou apagada na origem.
 
 ## Preservação de identidade e acesso
 
@@ -56,8 +59,9 @@ O usuário escolheu Neon Auth com novas senhas para as duas contas. Foi informad
 um endereço entregável para substituir o alias `.local` do visualizador. O plano
 privado e as reservas no ensaio preservam os IDs antigos, o papel de visualizador
 e seu proprietário. O e-mail anterior continua no registro de origem para auditoria.
-Nenhum endereço real é versionado; nenhuma conta real foi recriada nem recebeu
-mensagem ou senha durante os testes.
+Nenhum endereço real é versionado. Nos testes, o agente não escolheu senhas nem
+enviou mensagens. Na ativação, cada pessoa criou seu próprio login e confirmou
+seu e-mail pela interface; o serviço canônico confirmou ambas as verificações.
 
 A [documentação oficial do Neon](https://neon.com/docs/auth/migrate/from-supabase)
 informa que Managed Better Auth não importa senhas Supabase. Hashes ficam apenas
@@ -70,7 +74,7 @@ ou recuperação de senha usam a API nativa de códigos por e-mail. O adaptador
 não suporta trocar senha via `updateUser`, e o provedor de e-mail compartilhado
 não aceita verificação por link. Confirmação e recuperação usam OTP na interface.
 
-Para ativar as contas após revisão:
+Roteiro de ativação executado; não repetir o cadastro das contas já vinculadas:
 
 1. Provisionar o destino final e importar um snapshot atualizado, em janela de corte.
 2. Reservar os e-mails aprovados antes de abrir o cadastro à aplicação.

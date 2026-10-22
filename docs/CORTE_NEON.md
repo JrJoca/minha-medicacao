@@ -1,28 +1,33 @@
 # Corte para Neon
 
-O usuário autorizou iniciar o corte em 22/10/2026. A aplicação publicada continua
-no Supabase enquanto os pré-requisitos abaixo são concluídos. Não há congelamento
-da origem neste momento.
+O corte autorizado foi concluído em 22/10/2026 (UTC). A aplicação publicada em
+https://minha-medicacao.vercel.app usa Neon Auth, Data API e banco Neon. O Supabase
+permanece preservado, com escritas bloqueadas somente nas quatro tabelas migradas.
 
 ## Estado atual
 
-- Novo backup consistente criado e validado em diretório privado, fora do Git:
+- Snapshot final consistente criado após a barreira e validado em diretório privado, fora do Git:
   7 medicamentos, 2 rotinas, 7 vínculos, 2 tomadas e 2 contas.
-- `master` remota segue em `fca5b13d6b317182d64b0a97eb7f75e94670d1b6` na conferência.
+- PR #1 integrado à `master`; commit de ativação
+  `fb14c7f156d9ee356ce6ff6a6072110f550ab678`.
 - Destino autorizado: projeto `floral-pond-94925356`, branch padrão
   `br-muddy-term-b5xvw6i7`, banco `neondb`.
 - O schema de destino estava vazio antes do provisionamento. Neon Auth e Data API
   foram habilitados sem grants amplos.
-- Auth exige verificação OTP e mantém localhost desabilitado. Cadastro foi
-  habilitado na prévia para as pessoas definirem suas senhas e confirmarem os e-mails.
-  O cadastro de escopo pelo Data API e as escritas continuam revogados.
+- Auth exige verificação OTP e mantém localhost desabilitado. As duas pessoas
+  definiram suas senhas e confirmaram os e-mails pela prévia. Ambas as identidades
+  já estão vinculadas aos IDs antigos, mantendo papéis e proprietário do visualizador.
+  Na ativação, as escritas e o cadastro de novo escopo foram liberados sob RLS.
 - A cópia no destino final já foi comparada exatamente e o backup remoto completo
   foi recuperado e conferido: SHA-256, contagens e integridade passaram.
-- Estado do destino: `prepared`, 2 contas de origem, 0 vínculos de login e 2
-  contas reservadas verificadas na última conferência; sem permissões de escrita.
-- Código publicado na branch `feat/neon-migration`, commit de implementação
-  `ccaf2089eb7f521ad694f4c18f7567ca2c81c492`, com build Vercel confirmado.
-  PR em rascunho: https://github.com/JrJoca/minha-medicacao/pull/1 .
+- Estado do destino: `active`, 2 contas de origem, 2 vínculos de login e 2
+  contas reservadas verificadas; permissões de escrita protegidas pelo RLS.
+- Barreira na origem confirmada desde `2026-10-22 02:03:01.283742+00`.
+- Snapshot final SHA-256:
+  `46d29cdd81cecc764d152dd233437e25c076c5c43c10ca2374fbae507891484e`.
+- Deploy Vercel Production confirmado pelo GitHub, ID `7241870915`.
+  HTML e scripts públicos conferidos para usar exclusivamente os endpoints finais.
+  PR integrado: https://github.com/JrJoca/minha-medicacao/pull/1 .
 - Prévia de ativação: https://minha-medicacao-rn7j18rgx-jrjocas-projects.vercel.app .
   Sua origem e a origem de produção estão permitidas no Neon Auth.
 - O acesso ao SQL de produção e à API GitHub foi liberado e confirmado por
@@ -98,11 +103,11 @@ python3 scripts/neon-cutover.py status --production-authorized
 python3 scripts/neon-cutover.py verify-archive --production-authorized --sha256 SHA_DO_MANIFESTO
 ```
 
-## Sequência restante e condições do corte
+## Registro das etapas do corte
 
-As duas pessoas concluíram a confirmação de e-mail; a consulta canônica confirmou
-ambas as reservas verificadas. Não repetir `prepare` no destino já importado.
-O executor agora inclui as fases de barreira, finalização e ativação abaixo.
+As duas pessoas concluíram a confirmação de e-mail e a consulta canônica confirmou
+ambas as reservas verificadas. A barreira, finalização, vínculo, deploy e ativação
+foram executados com sucesso. Não repetir `prepare`, `finalize` ou `activate`.
 
 1. [x] Confirmar GitHub, SQL final e conexão com a prévia. [ ] Persistir/publicar
    o rascunho completo de rede e acessar a prévia com login Vercel.
@@ -110,17 +115,20 @@ O executor agora inclui as fases de barreira, finalização e ativação abaixo.
 3. [x] Publicar preview, permitir sua origem exata e habilitar cadastro para a ativação.
    As duas pessoas escolhem suas novas senhas e confirmam os e-mails. Não informar
    senhas/códigos no chat. As contas ficam sem acesso aos dados até a ligação final.
-4. Confirmar as duas identidades verificadas, o deploy pronto e a recuperação do
+4. [x] Confirmar as duas identidades verificadas, o deploy pronto e a recuperação do
    backup antes de iniciar a janela de indisponibilidade de escritas.
-5. Bloquear escritas apenas nas quatro tabelas da aplicação na origem; registrar
+5. [x] Bloquear escritas apenas nas quatro tabelas da aplicação na origem; registrar
    e testar a reversão. Não alterar `public.links` nem interromper Auth de outros usos.
-6. Obter snapshot final após o bloqueio e reconciliar mudanças desde a preparação.
+6. [x] Obter snapshot final após o bloqueio e reconciliar mudanças desde a preparação.
    Validar cada conteúdo/ID/vínculo. Não executar uma nova importação inicial nem
    sobrescrever cópias existentes sem comparação do estado esperado.
-7. Atualizar o backup remoto com o snapshot final, vincular identidades e conferir
+7. [x] Atualizar o backup remoto com o snapshot final, vincular identidades e conferir
    papéis. Habilitar as permissões de escrita no Neon em transação e ativar o frontend.
-8. Validar as duas contas reais, entrega dos códigos, web/Android e integrações.
-   Manter Supabase preservado durante a observação.
+8. [ ] As pessoas validam suas sessões e dados no domínio principal com as novas
+   senhas. Verificação administrativa das identidades/vínculos concluída.
+   Web pública: HTTP 200, hidratação, formulários e zero pageerrors. Atualização
+   do APK, sua origem no Auth, notificações em dispositivo e PHP seguem pendentes.
+   Usar a web; manter Supabase preservado durante a observação.
 
 Se qualquer pré-requisito faltar, manter a origem operante e o destino fechado
 para escrita. `freeze-source` instala triggers transacionais somente nas quatro
@@ -168,3 +176,5 @@ criados depois do corte.
 Lint passou com um aviso de imagem já existente. O bundle foi conferido para
 conter somente os endpoints do Neon final, sem hosts de fixtures/ensaio/Supabase.
 A preparação e a recuperação do backup foram executadas contra o destino real.
+A sincronização final e a ativação também foram executadas, com a origem bloqueada,
+backup final recuperado e verificação dos endpoints da aplicação pública.
