@@ -19,5 +19,6 @@ Veja [MIGRACAO_NEON.md](docs/MIGRACAO_NEON.md) para backup, restauração, teste
 
 `api/routines.php` é um proxy opcional para o Data API configurado por
 `NEON_DATA_API_URL`; não participa do fluxo normal do frontend. A estrutura
-`supabase/migrations` permanece como histórico da origem. A produção existente
-continua no Supabase enquanto esta branch é revisada.
+`supabase/migrations` permanece como histórico da origem. A produção web usa Neon;
+o Supabase é preservado para recuperação, com escritas bloqueadas nas quatro
+tabelas migradas. O APK antigo precisa ser atualizado antes de voltar a gravar.

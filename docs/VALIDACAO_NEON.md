@@ -1,9 +1,9 @@
 # Revisão da migração para Neon
 
-Relatório da validação anterior ao início do corte. Para o estado atual em
-22/10/2026, consulte [CORTE_NEON.md](CORTE_NEON.md).
-
-Implementação na branch local `feat/neon-migration`, sobre `fca5b13d6b317182d64b0a97eb7f75e94670d1b6`. Sem push, merge ou deploy. A produção continua em https://minha-medicacao.vercel.app, usando Supabase.
+Relatório atualizado após o corte autorizado em 22/10/2026 (UTC). A produção
+https://minha-medicacao.vercel.app usa Neon no commit
+`fb14c7f156d9ee356ce6ff6a6072110f550ab678`, integrado pelo PR #1.
+Registro operacional e recuperação: [CORTE_NEON.md](CORTE_NEON.md).
 
 ## O que mudou
 
@@ -26,9 +26,9 @@ Implementação na branch local `feat/neon-migration`, sobre `fca5b13d6b317182d6
 - Branch de cópia: `br-empty-water-b5nntdyc` (`codex-supabase-migration-20261021`).
 - Dados copiados e comparados exatamente: **7 medicamentos, 2 rotinas, 7 vínculos, 2 tomadas e 2 contas**. Comparação remota repetida após configuração dos serviços: quatro tabelas idênticas ao snapshot.
 - Neon Auth e Data API habilitados sem grants indiscriminados. Reservas dos dois e-mails preparadas. A escolha do novo endereço do visualizador está no plano privado; o vínculo com o proprietário foi preservado.
-- As duas contas reais ainda não foram criadas no Neon Auth/vinculadas a subjects. A falta de vínculo nega acesso; nenhuma senha foi escolhida nem mensagem enviada às pessoas.
+- As duas pessoas criaram seus logins, confirmaram os e-mails e tiveram seus subjects vinculados administrativamente no destino final. O agente não conhece suas senhas.
 - Branch sintética separada: `br-young-rain-b5wbapds` (`codex-neon-validation-20261021`). Somente fixtures, sem dados de pacientes. Nunca usar como destino da produção.
-- A branch Neon `production` e os dados/contas Supabase não receberam escrita. `public.links` não foi consultada, exportada ou alterada.
+- O destino final recebeu a cópia validada e está ativo. Na origem, a barreira transacional bloqueia apenas as quatro tabelas migradas; dados e contas foram preservados. `public.links` não foi consultada, exportada ou alterada.
 
 ## Testes executados
 
@@ -44,20 +44,20 @@ Implementação na branch local `feat/neon-migration`, sobre `fca5b13d6b317182d6
 | Interface OTP com transporte simulado | Cadastro, confirmação, reenvio e recuperação/troca de senha passaram; nenhum e-mail real foi disparado. |
 | TypeScript | Passou. |
 | Lint | Passou, com um aviso preexistente de imagem. Nenhuma regra foi desabilitada. |
-| Build e instalação congelada | Passaram; saída `dist/client` conferida para a cópia de ensaio, sem endpoint de fixtures ou host Supabase antigo. |
+| Build e instalação congelada | Passaram; build de deploy e scripts publicados conferidos com os dois endpoints Neon finais, sem endpoint de fixtures ou host Supabase antigo. |
 | Execução do build local | HTTP 200, hidratação, alternância login/cadastro e zero pageerrors. |
+| Produção web | HTTP 200, hidratação, formulários de login/cadastro/recuperação e zero pageerrors. Sem envio de e-mails ou mutações de pacientes pelo teste. |
+| Corte real | Snapshot final idêntico ao destino, recuperação do backup remoto conferida, duas identidades vinculadas e verificadas, fase `active` e grants de escrita protegidos pelo RLS. |
 
 O navegador headless usou requisições HTTPS encaminhadas pelo Playwright com proxy e TLS verificado, pois o Chromium isolado não reconhece a CA do proxy deste ambiente. Não se desativou a verificação TLS. Isso não substitui teste em Android/WebView real.
 
-## Pendências antes da produção
+## Acompanhamento após o corte
 
-1. Revisar código, SQL, procedimento e este relatório.
-2. Concluir acesso das duas contas com novas senhas e códigos definidos pelas próprias pessoas; executar a ligação administrativa e conferir as permissões. Não enviar senhas no chat.
-3. Guardar backup privado durável fora deste ambiente e conferir recuperação. O snapshot local inclui dados pessoais e hashes antigos e não deve ser versionado/publicado.
-4. Definir a janela de corte, obter snapshot atualizado e tratar escritas posteriores sem perda. Rollback do frontend sozinho não reconcilia novas escritas no Neon.
-5. Configurar origem e URLs do destino final; gerar build próprio e validar regressão web, e-mail OTP e Android. Entrega real dos códigos, APK/notificações em dispositivo e PHP não foram testados neste ambiente; falta SDK Android/PHP.
-6. Apresentar a versão final e obter autorização para a mudança de produção. Preservar Supabase e deployment anterior durante a validação.
-7. Após estabilizar a migração, implementar as features de estoque na ordem de `PLANO_ESTOQUE.md`.
+1. As pessoas entram pelo domínio público com as novas senhas para confirmar suas sessões e dados; a checagem administrativa dos vínculos já passou. Não enviar senhas/códigos no chat.
+2. Preservar os backups privados locais e remotos, o Supabase bloqueado e o deployment anterior durante a observação. A recuperação do arquivo remoto já foi conferida.
+3. Depois de novas escritas no Neon, rollback do frontend sozinho não reconcilia dados; exportar e preservar os deltas antes de qualquer retorno.
+4. Gerar e validar a atualização do APK, sua origem no Neon Auth e as notificações em dispositivo; usar a versão web até isso. SDK Android/PHP não estão instalados neste ambiente, portanto APK/notificações e integração PHP seguem sem validação real.
+5. Após estabilizar a migração, implementar as features de estoque na ordem de `PLANO_ESTOQUE.md`.
 
 ## Arquivos para revisão
 

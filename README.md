@@ -56,9 +56,10 @@ Os arquivos estáticos são gerados em `dist/client`.
 
 ## Configuração do Neon
 
-Esta branch prepara a migração completa para Neon. A versão publicada continua
-no Supabase até revisão e autorização do corte. Consulte o procedimento em
-[docs/MIGRACAO_NEON.md](docs/MIGRACAO_NEON.md) antes de importar dados.
+A [aplicação publicada](https://minha-medicacao.vercel.app) usa Neon para banco,
+autenticação e API. O corte autorizado preservou os dados e vinculou as duas
+contas antigas aos novos logins. Consulte o estado e a recuperação em
+[docs/CORTE_NEON.md](docs/CORTE_NEON.md). Não repetir a importação inicial.
 
 Consulte a [revisão e os testes](docs/VALIDACAO_NEON.md) e a
 [sequência de implementação do estoque](docs/PLANO_ESTOQUE.md).
