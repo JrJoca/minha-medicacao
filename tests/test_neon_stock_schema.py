@@ -80,5 +80,14 @@ class RoutineStockSchemaTests(StockSchemaTests):
     stockmodule = routine_stock
 
 
+spec_control = importlib.util.spec_from_file_location("medication_control", Path(__file__).parents[1] / "scripts/neon-medication-control.py")
+medication_control = importlib.util.module_from_spec(spec_control)
+spec_control.loader.exec_module(medication_control)
+
+
+class MedicationControlSchemaTests(StockSchemaTests):
+    stockmodule = medication_control
+
+
 if __name__ == "__main__":
     unittest.main()

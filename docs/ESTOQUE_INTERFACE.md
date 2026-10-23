@@ -1,7 +1,7 @@
 # Estoque por tomada: interface e regras
 
 Implementação no PR #3, para revisão antes de publicar. A base 003 está aplicada
-no Neon de produção; a ampliação 004 foi ensaiada somente na branch sintética.
+no Neon de produção; as ampliações 004 e 005 foram ensaiadas somente na branch sintética.
 O domínio principal continua com a versão publicada anteriormente.
 
 ## Como usar após a implantação
@@ -26,8 +26,10 @@ O domínio principal continua com a versão publicada anteriormente.
    dose futura não muda o consumo passado; corrigir data/hora não desconta de novo.
 7. Se faltar estoque, a tomada é registrada e o saldo fica negativo, com aviso
    para conferir o saldo físico. Esse comportamento foi escolhido pelo usuário.
-8. Reposições podem ser refletidas declarando o novo saldo físico, com movimento
-   de ajuste. Compras como entradas aditivas com motivo/data terão fluxo próprio.
+8. Na página **Controle de medicamentos**, ative/desative cadastros e registre
+   compras com quantidade, data, farmácia e link opcional. A compra soma unidades;
+   a conferência física corrige a contagem. **Ver compras** mantém o histórico.
+   Desativados saem das novas seleções, preservando rotinas e fatos existentes.
 
 O visualizador consulta os saldos e as rotinas, com mutações bloqueadas também
 no servidor. Uma troca de conta limpa os dados anteriores e cancela consultas.
@@ -41,9 +43,12 @@ Duas rotinas de um comprimido também totalizam dois por dia. Pausar/arquivar re
 sua quantidade dessa soma. Se houver rotina ativa sem dose/frequência estruturada,
 a previsão fica desconhecida. O tamanho da embalagem não multiplica o saldo.
 
-Essa divisão é uma estimativa proporcional, não uma simulação de agenda. Última
-dose coberta, primeira falta, término de tratamentos e recorrências complexas
-continuam pendentes. Saldo negativo mostra falta e cobertura de zero dias.
+A página simula as ocorrências diárias no calendário local: última dose coberta e
+primeira falta (“Repor até”). Não desconta novamente as tomadas confirmadas hoje.
+Usa os dias restantes configurados nos tratamentos limitados e informa quando o
+saldo cobre o período. A divisão proporcional permanece como duração de consumo.
+Recorrências complexas continuam sem previsão. Detalhes e limites em
+[CONTROLE_MEDICAMENTOS.md](CONTROLE_MEDICAMENTOS.md).
 
 ## Preservação e compatibilidade
 
@@ -79,6 +84,6 @@ TypeScript, lint e build fazem parte da verificação; o aviso preexistente de
 imagem do OCR permanece separado. Android continua como última etapa.
 
 A prévia automática da Vercel aponta para os endpoints de produção. A nova
-interface depende da migração 004; ela não constitui uma validação funcional
+interface depende das migrações 004 e 005; ela não constitui uma validação funcional
 antes dessa aplicação. As capturas e os testes com a branch sintética são a
 referência de revisão desta entrega.

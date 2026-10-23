@@ -1,4 +1,4 @@
-# Implantação da ampliação 004
+# Implantação das ampliações 004 e 005
 
 Status: SQL e interface implementados, ensaiados com dados sintéticos, **sem
 aplicação desta migração em produção**. A migração 003 permanece imutável.
@@ -37,10 +37,17 @@ Não consulta `public.links`. Não cria doses nem baixas antigas.
    O backup tem validade de uma hora e deve corresponder ao checksum do SQL.
 5. Usar `status --production-authorized`. Se apenas a atualização do cache falhar,
    executar `refresh-cache --production-authorized`; **não repetir apply**.
-6. Publicar o frontend aprovado. URLs públicas do Neon permanecem iguais; nenhuma
+6. Antes do frontend desta entrega, aplicar a ampliação 005 de ativação/compras:
+   fazer novo backup privado, agora com a base 004, usando
+   `python3 scripts/neon-medication-control.py backup --production-authorized
+   --output /NOVO_CAMINHO_PRIVADO_FORA_DO_GIT`. Depois usar `apply
+   --production-authorized --backup /NOVO_CAMINHO_PRIVADO_FORA_DO_GIT/neon_snapshot.json`,
+   seguido de `status --production-authorized`. O executor preserva os campos de
+   004 e a trilha/comandos existentes. Se só o cache falhar, usar `refresh-cache`.
+7. Publicar o frontend aprovado. URLs públicas do Neon permanecem iguais; nenhuma
    chave administrativa é introduzida no navegador. Validar acessos com owner e
    viewer sem criar tomadas fictícias nos dados de saúde.
-7. Conferir configuração explícita de doses/saldos antes de ativar cada rotina.
+8. Conferir configuração explícita de doses/saldos antes de ativar cada rotina.
    Android é a última entrega; APK antigo não recebe o novo formulário.
 
 ## Compensação
@@ -54,3 +61,10 @@ tomada usa o estorno original. Conferência física gera ajuste rastreável.
 A branch de backup e o snapshot servem para recuperação revisada. Não restaurar
 uma cópia antiga sobre a produção depois de novas tomadas sem reconciliar os
 registros posteriores; isso perderia fatos reais e estados de autenticação.
+
+A ampliação 005 foi ensaiada na branch sintética sem alterar os registros
+anteriores. Cadastros permanecem ativos e nenhuma compra é criada pela migração.
+A Vercel usa URLs limpas para servir `/medicamentos`; validar acesso direto e
+navegação entre as páginas. A navegação entre documentos HTML mantém o login e
+evita depender de transições RSC no servidor estático. A prévia automática ainda aponta para produção e não
+substitui os ensaios funcionais com schema 004/005 e dados sintéticos.

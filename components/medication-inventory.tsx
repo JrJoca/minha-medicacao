@@ -1,7 +1,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { Check, LoaderCircle, Package, Pencil, Pill, RefreshCw } from "lucide-react";
+import { Check, History, LoaderCircle, Package, Pencil, Pill, Power, RefreshCw, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,7 +10,9 @@ import { Label } from "@/components/ui/label";
 import { getBackend, type ApplicationUser } from "@/lib/neon";
 import { formatStockDuration, formatStockQuantity } from "@/lib/medication-stock";
 import { normalizeInventory, parseQuantity, unitLabel, type Inventory, type QuantityUnit } from "@/lib/inventory";
-type Medicine = { id: string; name: string; dosage: string; link?: string };
+import type { Medication as Medicine } from "@/lib/medication-catalog";
+import { forecastStock, formatForecastDate, type ForecastRoutine } from "@/lib/stock-forecast";
+import { MedicationPurchases } from "@/components/medication-purchases";
 const stockFields = [
   {key:"quantity",label:"Quantidade disponível",min:0},
   {key:"quantity_per_package",label:"Quantidade por caixa ou frasco",min:0.001},
@@ -24,15 +26,22 @@ function parseStockDraft(draft:StockDraft) {
   return {values,errors,valid:Object.keys(errors).length===0};
 }
 
-export function MedicationInventory({ medicines, user, dataLoading, revision, catalogError, catalogRecovered, onReloadCatalog }: {
+export function MedicationInventory({ medicines, user, dataLoading, revision, catalogError, catalogRecovered, onReloadCatalog, routines, forecastReady, now }: {
   medicines: Medicine[];
   user: ApplicationUser;
   dataLoading: boolean;
   revision: number;
   catalogError?: string;
   catalogRecovered?: boolean;
-  onReloadCatalog?: () => void;
+  onReloadCatalog?: () => Promise<void>;
+  routines: ForecastRoutine[];
+  forecastReady: boolean;
+  now: Date;
 }) {
+  const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
+  const [statusBusy, setStatusBusy] = useState(false);
+  const statusLock = useRef(false);
+  const [purchaseTarget, setPurchaseTarget] = useState<{id:string;mode:"purchase"|"history"}|null>(null);
   const [stocks, setStocks] = useState<Record<string, Inventory>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -92,6 +101,20 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
     setSelectedId(medicine.id);
   }
 
+  async function changeStatus(medicine: Medicine) {
+    if (!canEdit || statusLock.current || dataLoading || catalogError) return;
+    statusLock.current = true;setStatusBusy(true);setMessage("");setSaveError("");
+    try {
+      const {error} = await getBackend().rpc("set_medication_active", {p_medication_id:medicine.id,p_active:!medicine.active}).abortSignal(AbortSignal.timeout(20_000));
+      if (error) throw error;
+      if (!mounted.current) return;
+      await onReloadCatalog?.();
+      if (mounted.current) setMessage(medicine.name + (medicine.active ? " desativado. Os vínculos das rotinas existentes foram preservados." : " ativado e disponível para novas rotinas."));
+    } catch {
+      if (mounted.current) setSaveError("Não foi possível alterar a situação do medicamento. Atualize a lista e tente novamente.");
+    } finally {statusLock.current = false;if(mounted.current)setStatusBusy(false);}
+  }
+
   async function saveStock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canEdit || !selected || saveLock.current || loading || loadError) return;
@@ -136,8 +159,12 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
       </div>
       <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-sm leading-6 text-blue-900">
         <p className="font-semibold">Estoque atualizado pelas tomadas.</p>
-        <p>Ao confirmar uma rotina configurada, as quantidades são descontadas. Ao desfazer, a baixa original é estornada. Confira o saldo físico para registrar reposições ou ajustes.</p>
+        <p>As rotinas ativas determinam o consumo. Cada tomada confirmada atualiza o saldo; desfazer estorna a baixa. Registre compras para somar unidades ou confira o saldo físico para corrigir a contagem.</p>
       </div>
+      <div className="mb-4 flex flex-wrap gap-2" aria-label="Filtrar medicamentos">
+        {([ ["all","Todos"], ["active","Ativos"], ["inactive","Desativados"] ] as const).map(([value,label])=><Button key={value} type="button" variant={filter===value ? "default" : "outline"} aria-pressed={filter===value} onClick={()=>setFilter(value)} className="rounded-xl">{label} ({medicines.filter(m=>value==="all" || (value==="active" ? m.active : !m.active)).length})</Button>)}
+      </div>
+      {saveError && !selected && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
       {catalogError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{catalogError}</p><Button variant="outline" disabled={dataLoading} onClick={onReloadCatalog} className="mt-3 rounded-xl">Tentar novamente</Button></div>}
       {catalogRecovered && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">Mostrando os medicamentos usados nas rotinas. Atualize a lista para consultar o cadastro completo.</p>}
       {loadError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -152,7 +179,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
         </Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {medicines.map(medicine => {
+          {medicines.filter(m=>filter==="all" || (filter==="active" ? m.active : !m.active)).map(medicine => {
             const stock = stocks[medicine.id];
             const known = stock?.quantity != null;
             const empty = stock?.quantity != null && stock.quantity <= 0;
@@ -165,6 +192,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
                   <div className="min-w-0">
                     <h3 className="break-words font-extrabold text-slate-900">{medicine.name}</h3>
                     <p className="mt-1 break-words text-sm text-slate-600">{medicine.dosage}</p>
+                    <span className={"mt-2 inline-block rounded-full px-2 py-1 text-xs font-semibold " + (medicine.active ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600")}>{medicine.active ? "Ativo" : "Desativado"}</span>
                     {medicine.link && <a href={medicine.link} target="_blank" rel="noreferrer" className="mt-2 block break-all text-sm font-semibold text-blue-700 hover:underline">Ver referência</a>}
                   </div>
                 </div>
@@ -183,17 +211,27 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
                       <div><dt className="text-slate-500">Por dia</dt><dd className="mt-1 font-semibold">{formatStockQuantity(stock?.daily_quantity)}</dd></div>
                     </dl>
                     {negative && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-800">Faltam {formatStockQuantity(Math.abs(stock.quantity!))} {unitLabel(stock.unit)} no saldo registrado. A tomada foi preservada; confira o estoque físico.</p>}
-                    <StockForecast stock={stock} />
+                    <StockForecast medicationId={medicine.id} stock={stock} routines={routines} ready={forecastReady} now={now} />
                   </>}
                   <Button type="button" variant="outline" disabled={unavailable || saving} onClick={() => openStock(medicine)} aria-label={`${canEdit ? "Configurar" : "Consultar"} estoque de ${medicine.name}`} className="mt-4 h-11 w-full rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50">
-                    {canEdit ? <Pencil /> : <Package />}{canEdit ? known ? "Atualizar estoque" : "Configurar estoque" : "Consultar estoque"}
+                    {canEdit ? <Pencil /> : <Package />}{canEdit ? known ? "Conferir saldo físico" : "Configurar estoque" : "Consultar estoque"}
                   </Button>
+                  <div className="mt-2 grid gap-2">
+                    <Button type="button" variant="outline" disabled={!canEdit || unavailable || saving || dataLoading || !!catalogError} onClick={()=>setPurchaseTarget({id:medicine.id,mode:"purchase"})} className="h-11 rounded-xl"><ShoppingBag />Registrar compra</Button>
+                    <Button type="button" variant="ghost" disabled={dataLoading || !!catalogError} onClick={()=>setPurchaseTarget({id:medicine.id,mode:"history"})} className="h-10 rounded-xl"><History />Ver compras</Button>
+                    <Button type="button" variant="ghost" disabled={!canEdit || statusBusy || dataLoading || !!catalogError} onClick={()=>void changeStatus(medicine)} aria-label={(medicine.active ? "Desativar " : "Ativar ")+medicine.name} className="h-10 rounded-xl"><Power />{medicine.active ? "Desativar medicamento" : "Ativar medicamento"}</Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>;
           })}
         </div>
       )}
+      {!!medicines.length && !medicines.some(m=>filter==="all" || (filter==="active" ? m.active : !m.active)) && <p className="rounded-2xl border border-dashed p-5 text-sm text-slate-500">Nenhum medicamento neste filtro.</p>}
+      {purchaseTarget && medicines.find(m=>m.id===purchaseTarget.id) && <MedicationPurchases key={purchaseTarget.id+purchaseTarget.mode}
+        medicine={medicines.find(m=>m.id===purchaseTarget.id)!} stock={stocks[purchaseTarget.id]} mode={purchaseTarget.mode} canEdit={canEdit}
+        onClose={()=>setPurchaseTarget(null)} onSaved={()=>{setPurchaseTarget(null);setRefresh(value=>value+1);setMessage("Compra registrada e somada ao estoque.");}}
+        onConfigureStock={()=>{const medicine=medicines.find(m=>m.id===purchaseTarget.id);setPurchaseTarget(null);if(medicine)openStock(medicine);}} />}
       <Dialog open={!!selected} onOpenChange={open => { if (!open && !saveLock.current) setSelectedId(null); }}>
         <DialogContent showCloseButton={!saving} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto rounded-3xl p-5 sm:max-w-lg sm:p-6">
           <DialogHeader className="pr-5 text-left">
@@ -217,7 +255,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
                 {errors[key] && <p id={`stock-${key}-error`} className="text-sm text-red-700">{errors[key]}</p>}
               </div>)}
             </fieldset>
-            <StockForecast stock={selected ? stocks[selected.id] : undefined} />
+            <StockForecast medicationId={selected?.id || ""} stock={selected ? stocks[selected.id] : undefined} routines={routines} ready={forecastReady} now={now} />
             {saveError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
             {Object.keys(errors).some(key => !!errors[key as keyof StockErrors]) && <p role="alert" className="text-sm text-red-700">Confira os campos indicados antes de salvar.</p>}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -228,7 +266,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
             <dl className="grid gap-4 rounded-2xl border border-slate-200 p-4 text-sm">
               {stockFields.map(({key,label}) => <div key={key}><dt className="text-slate-500">{label}</dt><dd className="mt-1 text-lg font-semibold">{formatStockQuantity(selected ? stocks[selected.id]?.[key] : null)}</dd></div>)}
             </dl>
-            <StockForecast stock={selected ? stocks[selected.id] : undefined} />
+            <StockForecast medicationId={selected?.id || ""} stock={selected ? stocks[selected.id] : undefined} routines={routines} ready={forecastReady} now={now} />
             <p className="text-sm text-slate-500">Perfil visualizador: somente consulta.</p>
             <Button variant="outline" onClick={() => setSelectedId(null)} className="h-11 rounded-xl">Fechar</Button>
           </>}
@@ -238,14 +276,21 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
   );
 }
 
-function StockForecast({stock}: {stock?: Inventory}) {
-  const days = stock?.estimated_days;
+function StockForecast({medicationId,stock,routines,ready,now}: {medicationId:string;stock?:Inventory;routines:ForecastRoutine[];ready:boolean;now:Date}) {
+  const forecast = forecastStock(medicationId,stock?.quantity ?? null,stock?.unit ?? null,routines,now);
+  const reason = forecast.state === "missing_balance" ? "Informe o saldo físico para calcular."
+    : forecast.state === "no_routines" ? "Nenhuma rotina ativa utiliza este medicamento."
+    : forecast.state === "missing_doses" ? "Configure quantidades e frequência diária em todas as rotinas ativas deste medicamento."
+    : forecast.state === "out_of_range" ? "A quantidade excede o período de calendário que pode ser exibido."
+    : forecast.state === "covered" ? "O saldo cobre o período configurado das rotinas ativas." : "";
   return <div className="mt-auto rounded-xl bg-slate-50 p-3">
-    <p className="text-xs font-semibold text-slate-500">Duração estimada</p>
-    <p className="mt-1 text-lg font-bold text-blue-800">{formatStockDuration(days)}</p>
-    <p className="mt-1 text-xs leading-5 text-slate-500">{days == null
-      ? "Informe o saldo e configure as quantidades nas rotinas diárias ativas. Outras frequências ficam sem previsão."
-      : `${formatStockQuantity(stock?.quantity)} ${unitLabel(stock?.unit)} ÷ ${formatStockQuantity(stock?.daily_quantity)} por dia`}</p>
-    {days != null && !Number.isInteger(days) && <p className="mt-1 text-xs font-medium text-slate-600">{stock?.full_days_covered} {stock?.full_days_covered === 1 ? "dia completo coberto" : "dias completos cobertos"}</p>}
+    <p className="text-xs font-semibold text-slate-500">Previsão de término do estoque</p>
+    {!ready ? <p className="mt-2 text-sm text-slate-500">Atualizando as rotinas para calcular a previsão…</p> : <>
+      <p className="mt-1 text-lg font-bold text-blue-800">{forecast.state === "forecast" ? forecast.lastCovered ? formatForecastDate(forecast.lastCovered) : "Sem uma dose completa disponível" : forecast.state === "covered" ? "Cobre o tratamento" : "Sem previsão"}</p>
+      {forecast.lastCovered && forecast.state === "forecast" && <p className="mt-1 text-xs text-slate-500">Última tomada totalmente coberta</p>}
+      {forecast.firstUncovered && <p className="mt-2 text-sm font-semibold text-amber-800">Repor até {formatForecastDate(forecast.firstUncovered)}</p>}
+      {reason && <p className="mt-1 text-xs leading-5 text-slate-500">{reason}</p>}
+      {forecast.state === "forecast" && <p className="mt-2 text-xs leading-5 text-slate-500">{formatStockQuantity(forecast.dailyQuantity)} {unitLabel(stock?.unit)} por dia · {formatStockDuration(stock?.estimated_days)} de consumo. Considera as doses ainda pendentes de hoje e os dias restantes do tratamento. A previsão muda com as rotinas e o saldo.</p>}
+    </>}
   </div>;
 }

@@ -13,7 +13,9 @@ Android foi movido para a última etapa, conforme orientação do usuário.
 Atualização: o usuário pediu quantidade por medicamento na rotina, em comprimidos
 ou ml, com baixa ao confirmar, e escolheu registrar a tomada mesmo sem estoque.
 A ampliação 004 e a interface estão implementadas para revisão no PR #3, com
-ensaio sintético. Essa ampliação ainda não foi aplicada em produção. O consumo
+ensaio sintético. Essa ampliação ainda não foi aplicada em produção. A entrega também inclui a
+página `/medicamentos`, ativação, compras e previsão de calendário (migração 005),
+descritas em `CONTROLE_MEDICAMENTOS.md`. O consumo
 diário passa a vir das rotinas, com suporte a três casas decimais. Detalhes em
 `ESTOQUE_INTERFACE.md` e `ESTOQUE_ROTINAS_IMPLANTACAO.md`.
 
@@ -48,16 +50,16 @@ da base GitHub/Vercel.
 | 4 | [x] Permissões da base de estoque | Proprietário altera, viewer vinculado só consulta, outros usuários/anônimos não acessam. | Quatro políticas RLS e RPC com SECURITY INVOKER verificadas no ensaio e no destino final. Estender a proteção às futuras tabelas de movimentos. |
 | 5 | [x] Configuração dos medicamentos legados | Mostrar estoque desconhecido e solicitar saldo físico; quantidades de consumo são confirmadas por medicamento na rotina. | Implementado no PR para revisão, sem inferir doses ou descontar o passado. |
 | 6 | [x] Configuração separada do cadastro | Conferência física, quantidade por caixa/frasco e unidade, preservando nome/dosagem/link do cadastro. | Interface e RPC idempotente de ajuste implementadas e ensaiadas. |
-| 7 | [ ] Compras e entradas aditivas | Fluxo próprio de compra/reposição com quantidade acrescentada, motivo e data. A conferência física com ajuste auditado já está implementada. | Entrada por compra ainda pendente; não confundir com declarar o novo saldo físico. |
+| 7 | [x] Compras e entradas aditivas | Página de controle, ativação, compra com quantidade/data/farmácia/link e histórico paginado. Conferência física continua separada. | Implementado e ensaiado no PR #3; migração 005 aguarda implantação. |
 | 8 | [x] Quantidade por medicamento na rotina | Quantidades positivas por tomada em comprimidos ou ml, com até três casas decimais e doses diferentes por item. | Implementado/ensaiado; alterações futuras não mudam as baixas antigas. Aguarda implantação. |
-| 9 | [ ] Agenda estruturada completa | Frequência diária/outra e ocorrência com data/fuso já implementadas; recorrências avançadas e término ainda pendentes. | A previsão atual só divide saldo pelo consumo das rotinas diárias ativas. |
+| 9 | [ ] Agenda estruturada completa | Frequência diária/outra e ocorrência com data/fuso já implementadas; recorrências avançadas e término ainda pendentes. | A simulação diária já considera horários e os dias restantes configurados; outras recorrências continuam pendentes. |
 | 10 | [x] Confirmação atômica e idempotente | Tomada e baixas de todos os medicamentos na mesma transação; tentativas repetidas não duplicam. | Implementado/ensaiado com requisições simultâneas, rollback e saldo insuficiente. Aguarda implantação. |
 | 11 | [x] Desfazer e corrigir | Estorno pela quantidade original uma única vez; correção de data/hora sem novo consumo; legado não cria reposição fictícia. | Implementado/ensaiado, com snapshots de consumo e movimento de estorno. Aguarda implantação. |
 | 12 | [x] Preservação e arquivamento | Movimentos guardam nome/dosagem/quantidade; arquivamento conserva tomadas e protege contra cascatas destrutivas. | Implementado/ensaiado. A tela detalhada de movimentações ainda é futura. Aguarda implantação. |
-| 13 | [ ] Previsão de término | Simular próximas ocorrências de todas as rotinas do medicamento, respeitando saldo, doses já confirmadas, horários, pausas e fim. | Exibe última dose integralmente coberta e primeira ocorrência com falta; explica casos sem previsão. |
+| 13 | [x] Previsão de término diária | Simula as próximas tomadas de todas as rotinas diárias ativas, respeitando horários, confirmações de hoje e dias restantes configurados. | Última dose coberta e primeira falta, com motivos para casos sem previsão. Implementado/ensaiado; aguarda implantação. |
 | 14 | [x] Painel de estoque | Saldo, embalagem, unidade, consumo diário derivado das rotinas, duração e aviso de saldo negativo. | Implementado para revisão, com consulta de visualizador e estados desconhecido/zero/falta. |
 | 15 | [ ] Integrações e regressão web | Integrar relatório/histórico, manter OCR revisável, WhatsApp com horário persistido e envio manual e ordenação/próxima rotina. | Fluxos web existentes verificados; OCR não inventa estoque. Android fica na última etapa. |
-| 16 | [x] Testes e apresentação desta entrega | Testes de banco, permissões, idempotência, concorrência, migração e interface com fixtures; SQL e plano de implantação no PR. | 128 testes locais, TypeScript, lint e build; evidências de API/navegador sintéticos. Não equivale a publicação. |
+| 16 | [x] Testes e apresentação desta entrega | Testes de banco, permissões, idempotência, concorrência, migração e interface com fixtures; SQL e plano de implantação no PR. | 161 testes locais, TypeScript, lint e build; evidências de API/navegador sintéticos. Não equivale a publicação. |
 | 17 | [ ] Implantação controlada, após revisão | Fazer backup privado e verificar restauração; aplicar mudanças compatíveis, publicar versão aprovada e validar o resultado. | Autorização explícita para produção, SHA conferido e smoke seguro; sem escrita de testes em dados reais. |
 | 18 | [ ] Android — última etapa | Atualizar o APK com todas as funcionalidades web concluídas, origem no Neon Auth e notificações. | APK gerado e validado em dispositivo após as entregas anteriores. |
 
@@ -91,8 +93,8 @@ Login/cadastro/logout e sessão; perfil visualizador; medicamentos e links; sele
 
 ## Validação e critérios de aceite
 
-Resultados iniciais de onboarding abaixo foram superados: 128 testes passam após
-a ampliação por rotina e a interface de estoque, TypeScript/lint/build passam (lint com um aviso de imagem), e
+Resultados iniciais de onboarding abaixo foram superados: 161 testes passam após
+as ampliações por rotina/compras e a interface de controle, TypeScript/lint/build passam (lint com um aviso de imagem), e
 Auth/Data API foram validados com fixtures Neon. As duas contas de produção foram
 confirmadas pelo usuário. APK permanece como última etapa. O histórico inicial
 fica registrado para comparação:
