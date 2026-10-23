@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
+import { readMedicationCatalog, type MedicationLinkRead } from "@/lib/medication-catalog";
 import { syncRoutineNotifications } from "@/lib/native-notifications";
 import {
   emptyPrescriptionDraft,
@@ -85,6 +86,10 @@ export default function Home() {
   const [user, setUser] = useState<ApplicationUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
+  const [medicineLoading, setMedicineLoading] = useState(true);
+  const [medicineError, setMedicineError] = useState("");
+  const [catalogRecovered, setCatalogRecovered] = useState(false);
+  const medicineRequest = useRef(0);
   const [authNotice, setAuthNotice] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "signup" | "verify" | "recover" | "reset">("login");
   const [pendingAuthEmail, setPendingAuthEmail] = useState("");
@@ -201,52 +206,65 @@ export default function Home() {
       }),
     );
 
+  const loadMedicines = useCallback(async (links?: PromiseLike<MedicationLinkRead>) => {
+    const revision = authRevision.current;
+    const request = ++medicineRequest.current;
+    setMedicineLoading(true);
+    setMedicineError("");
+    setCatalogRecovered(false);
+    try {
+      const result = await readMedicationCatalog({
+        all: () => getBackend().from("medications")
+          .select("id,name,dosage,reference_url").order("created_at"),
+        links: async () => {
+          const result = await (links ?? getBackend().from("routine_medications")
+            .select("routine_id,medication_id"));
+          return { data: result.data?.map(row => row.medication_id), error: result.error };
+        },
+        byIds: ids => getBackend().from("medications")
+          .select("id,name,dosage,reference_url").in("id", ids).order("created_at"),
+      });
+      if (revision !== authRevision.current || request !== medicineRequest.current) return;
+      setMedicines(result.rows.map(m => ({
+        id: m.id, name: m.name, dosage: m.dosage, link: m.reference_url || "",
+      })));
+      setCatalogRecovered(result.recoveredFromLinks);
+    } catch {
+      if (revision === authRevision.current && request === medicineRequest.current) {
+        setMedicineError("Não foi possível carregar seus medicamentos. Tente novamente antes de cadastrar ou configurar uma rotina.");
+      }
+    } finally {
+      if (revision === authRevision.current && request === medicineRequest.current) setMedicineLoading(false);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     const revision = authRevision.current;
     setDataLoading(true);
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    const [medicineResult, routineResult, linkResult, intakeResult] =
-      await Promise.all([
-        getBackend()
-          .from("medications")
-          .select("id,name,dosage,reference_url")
-          .order("created_at"),
+    const linkRequest = Promise.resolve(getBackend().from("routine_medications")
+      .select("routine_id,medication_id"));
+    const catalogRequest = loadMedicines(linkRequest);
+    try {
+      const [routineResult, linkResult, intakeResult] = await Promise.all([
         getBackend().from("medication_routines").select("*").order("created_at"),
-        getBackend().from("routine_medications").select("routine_id,medication_id"),
-        getBackend()
-          .from("medication_intakes")
-          .select("routine_id,taken_at")
+        linkRequest,
+        getBackend().from("medication_intakes").select("routine_id,taken_at")
           .gte("taken_at", startOfDay.toISOString()),
       ]);
-    if (revision !== authRevision.current) return;
-    const error =
-      medicineResult.error ||
-      routineResult.error ||
-      linkResult.error ||
-      intakeResult.error;
-    if (error) {
-      setNotice("Não foi possível carregar os dados: " + error.message);
-      setDataLoading(false);
-      return;
-    }
-    setMedicines(
-      (medicineResult.data || []).map((m) => ({
-        id: m.id,
-        name: m.name,
-        dosage: m.dosage,
-        link: m.reference_url || "",
-      })),
-    );
-    const links = linkResult.data || [];
-    const todayIntakes = intakeResult.data || [];
-    setRoutines(
-      (routineResult.data || []).map((r) => ({
+      if (revision !== authRevision.current) return;
+      const error = routineResult.error || linkResult.error || intakeResult.error;
+      if (error) {
+        setNotice("Não foi possível carregar as rotinas. Seus medicamentos são consultados separadamente.");
+        return;
+      }
+      const links = linkResult.data || [];
+      const todayIntakes = intakeResult.data || [];
+      setRoutines((routineResult.data || []).map(r => ({
         id: r.id,
         name: r.name,
-        medicineIds: links
-          .filter((l) => l.routine_id === r.id)
-          .map((l) => l.medication_id),
+        medicineIds: links.filter(l => l.routine_id === r.id).map(l => l.medication_id),
         time: String(r.scheduled_time).slice(0, 5),
         limit: String(r.deadline_time).slice(0, 5),
         period: r.period_description,
@@ -255,14 +273,17 @@ export default function Home() {
         noEndDate: r.has_no_end_date,
         currentDay: r.current_day,
         totalDays: r.total_days,
-        taken: todayIntakes.some((i) => i.routine_id === r.id),
-        takenAt:
-          todayIntakes.find((i) => i.routine_id === r.id)?.taken_at || null,
+        taken: todayIntakes.some(i => i.routine_id === r.id),
+        takenAt: todayIntakes.find(i => i.routine_id === r.id)?.taken_at || null,
         paused: r.status === "paused",
-      })),
-    );
-    setDataLoading(false);
-  }, []);
+      })));
+    } catch {
+      if (revision === authRevision.current) setNotice("Não foi possível carregar as rotinas. Tente atualizar a página.");
+    } finally {
+      if (revision === authRevision.current) setDataLoading(false);
+    }
+    await catalogRequest;
+  }, [loadMedicines]);
 
   useEffect(() => {
     let active = true;
@@ -272,6 +293,9 @@ export default function Home() {
       const revision = ++authRevision.current;
       setUser(null);
       setMedicines([]);
+      setMedicineLoading(true);
+      setMedicineError("");
+      setCatalogRecovered(false);
       setRoutines([]);
       setReportIntakes([]);
       setHistoryIntakes([]);
@@ -609,7 +633,7 @@ export default function Home() {
       },
     ]);
     setMedicineOpen(false);
-    setNotice(data.name + " foi salvo no Supabase.");
+    setNotice(data.name + " foi salvo.");
   }
 
   function choosePrescription(file?: File) {
@@ -724,7 +748,7 @@ export default function Home() {
     );
   }
   function openNewRoutine() {
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError) return;
     setEditingRoutine(null);
     setSelected([]);
     setMedicineToAdd("");
@@ -732,7 +756,7 @@ export default function Home() {
     setRoutineOpen(true);
   }
   function openEditRoutine(routine: Routine) {
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError) return;
     setEditingRoutine(routine);
     setSelected([...routine.medicineIds]);
     setMedicineToAdd("");
@@ -741,7 +765,7 @@ export default function Home() {
   }
   async function saveRoutine(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError) return;
     const d = new FormData(e.currentTarget);
     const name = String(d.get("routineName"));
     if (!user) return;
@@ -2095,7 +2119,7 @@ export default function Home() {
               <DialogTrigger asChild>
                 <Button
                   onClick={openNewRoutine}
-                  disabled={isViewer}
+                  disabled={isViewer || medicineLoading || !!medicineError}
                   title={isViewer ? "Perfil somente leitura" : undefined}
                   className="col-span-2 h-11 rounded-xl bg-blue-600 hover:bg-blue-700 sm:col-span-1"
                 >
@@ -2193,7 +2217,7 @@ export default function Home() {
                         })}
                       </div>
                     )}
-                    {medicines.length === 0 && (
+                    {!medicineLoading && !medicineError && medicines.length === 0 && (
                       <p className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
                         Cadastre um medicamento antes de criar a rotina.
                       </p>
@@ -2276,7 +2300,7 @@ export default function Home() {
                       : "Exemplos: 30 dias ou 12 semanas."}
                   </p>
                   <Button
-                    disabled={selected.length === 0}
+                    disabled={selected.length === 0 || medicineLoading || !!medicineError}
                     className="h-12 rounded-xl bg-blue-600"
                   >
                     {editingRoutine ? "Salvar alterações" : "Salvar rotina"}
@@ -2331,20 +2355,28 @@ export default function Home() {
             icon={<BellRing />}
             label="Rotinas ativas"
             value={String(active.length)}
-            note={medicines.length + " medicamentos cadastrados"}
+            note={medicineLoading ? "Carregando medicamentos…" : medicineError ? "Medicamentos indisponíveis" : medicines.length + " medicamentos cadastrados"}
           />
         </section>
         <section className="mb-8">
-          <div className="mb-4">
-            <h2 className="text-xl font-bold">Medicamentos cadastrados</h2>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-xl font-bold">Medicamentos cadastrados</h2>
             <p className="text-sm text-slate-500">
               Lista completa de medicamentos e respectivas dosagens.
-            </p>
+            </p></div>
+            <Button variant="outline" disabled={medicineLoading} onClick={() => void loadMedicines()} className="rounded-xl">
+              {medicineLoading && <LoaderCircle className="animate-spin" />} Atualizar medicamentos
+            </Button>
           </div>
+          {medicineError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p>{medicineError}</p>
+            <Button variant="outline" disabled={medicineLoading} onClick={() => void loadMedicines()} className="mt-3 rounded-xl">Tentar novamente</Button>
+          </div>}
+          {catalogRecovered && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">Mostrando os medicamentos usados nas rotinas. Atualize a lista para consultar o cadastro completo.</p>}
           {medicines.length === 0 ? (
             <Card className="rounded-3xl border-dashed border-slate-300 bg-white">
               <CardContent className="p-6 text-sm text-slate-500">
-                Nenhum medicamento cadastrado.
+                {medicineLoading ? "Carregando medicamentos…" : medicineError ? "O cadastro está indisponível. Seus medicamentos não foram excluídos." : "Nenhum medicamento cadastrado."}
               </CardContent>
             </Card>
           ) : (
@@ -2402,10 +2434,8 @@ export default function Home() {
                   <Pill />
                 </div>
                 <div>
-                  <h3 className="font-bold">Nenhum medicamento cadastrado</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Cadastre um medicamento para começar a criar suas rotinas.
-                  </p>
+                  <h3 className="font-bold">{dataLoading ? "Carregando rotinas…" : "Nenhuma rotina disponível"}</h3>
+                  <p className="mt-1 text-sm text-slate-500">{medicineLoading ? "Aguarde o carregamento dos medicamentos." : medicineError ? "Atualize o cadastro de medicamentos antes de configurar uma rotina." : medicines.length ? "Seus medicamentos estão cadastrados. Crie uma rotina para organizar os horários." : "Cadastre um medicamento para começar a criar suas rotinas."}</p>
                 </div>
                 <Button
                   onClick={() => setMedicineOpen(true)}
