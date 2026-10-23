@@ -49,6 +49,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
+import { dashboardClock } from "@/lib/dashboard-clock";
+import { readRoutineCatalog } from "@/lib/routine-catalog";
 import { readMedicationCatalog, type MedicationLinkRead } from "@/lib/medication-catalog";
 import { syncRoutineNotifications } from "@/lib/native-notifications";
 import {
@@ -86,6 +88,12 @@ export default function Home() {
   const [user, setUser] = useState<ApplicationUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
+  const [routineLoading, setRoutineLoading] = useState(true);
+  const [routineLoadError, setRoutineLoadError] = useState("");
+  const [routineDetailsError, setRoutineDetailsError] = useState("");
+  const [todayIntakesReady, setTodayIntakesReady] = useState(false);
+  const [routinesRecovered, setRoutinesRecovered] = useState(false);
+  const routineRequest = useRef(0);
   const [medicineLoading, setMedicineLoading] = useState(true);
   const [medicineError, setMedicineError] = useState("");
   const [catalogRecovered, setCatalogRecovered] = useState(false);
@@ -137,13 +145,11 @@ export default function Home() {
   const [selected, setSelected] = useState<string[]>([]);
   const [medicineToAdd, setMedicineToAdd] = useState("");
   const [noEndDate, setNoEndDate] = useState(false);
-  const [notice, setNotice] = useState(
-    "A próxima rotina está programada para 19:00.",
-  );
-  const [currentTimeInMinutes, setCurrentTimeInMinutes] = useState(() => {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes();
-  });
+  const [notice, setNotice] = useState("");
+  const [now, setNow] = useState(() => new Date());
+  const clock = dashboardClock(now);
+  const currentTimeInMinutes = clock.minutes;
+  const confirmationsReady = todayIntakesReady && !routineLoading && !routineLoadError;
   const isViewer = user?.role === "viewer";
   const viewerMutationBlocked = () => {
     if (!isViewer) return false;
@@ -212,17 +218,18 @@ export default function Home() {
     setMedicineLoading(true);
     setMedicineError("");
     setCatalogRecovered(false);
+    const signal = AbortSignal.timeout(20_000);
     try {
       const result = await readMedicationCatalog({
         all: () => getBackend().from("medications")
-          .select("id,name,dosage,reference_url").order("created_at"),
+          .select("id,name,dosage,reference_url").order("created_at").abortSignal(signal),
         links: async () => {
           const result = await (links ?? getBackend().from("routine_medications")
-            .select("routine_id,medication_id"));
+            .select("routine_id,medication_id").abortSignal(signal));
           return { data: result.data?.map(row => row.medication_id), error: result.error };
         },
         byIds: ids => getBackend().from("medications")
-          .select("id,name,dosage,reference_url").in("id", ids).order("created_at"),
+          .select("id,name,dosage,reference_url").in("id", ids).order("created_at").abortSignal(signal),
       });
       if (revision !== authRevision.current || request !== medicineRequest.current) return;
       setMedicines(result.rows.map(m => ({
@@ -240,47 +247,77 @@ export default function Home() {
 
   const loadData = useCallback(async () => {
     const revision = authRevision.current;
+    const request = ++routineRequest.current;
+    const current = () => revision === authRevision.current && request === routineRequest.current;
     setDataLoading(true);
+    setRoutineLoading(true);
+    setRoutineLoadError("");
+    setRoutineDetailsError("");
+    setTodayIntakesReady(false);
+    setRoutinesRecovered(false);
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setDate(endOfDay.getDate() + 1);
+    const knownIntakeToday = (at?: string | null) => !!at && new Date(at) >= startOfDay && new Date(at) < endOfDay;
+    const signal = AbortSignal.timeout(20_000);
+    // SELECT * mantém compatibilidade com vínculos anteriores à ampliação de doses.
     const linkRequest = Promise.resolve(getBackend().from("routine_medications")
-      .select("routine_id,medication_id"));
+      .select("*").abortSignal(signal));
+    const intakeRequest = Promise.resolve(getBackend().from("medication_intakes")
+      .select("id,routine_id,taken_at").gte("taken_at", startOfDay.toISOString())
+      .lt("taken_at", endOfDay.toISOString()).abortSignal(signal));
+    // Registra os handlers imediatamente, inclusive se a leitura principal falhar.
+    const detailsRequest = Promise.allSettled([linkRequest, intakeRequest]);
     const catalogRequest = loadMedicines(linkRequest);
     try {
-      const [routineResult, linkResult, intakeResult] = await Promise.all([
-        getBackend().from("medication_routines").select("*").order("created_at"),
-        linkRequest,
-        getBackend().from("medication_intakes").select("routine_id,taken_at")
-          .gte("taken_at", startOfDay.toISOString()),
-      ]);
-      if (revision !== authRevision.current) return;
-      const error = routineResult.error || linkResult.error || intakeResult.error;
-      if (error) {
-        setNotice("Não foi possível carregar as rotinas. Seus medicamentos são consultados separadamente.");
-        return;
-      }
-      const links = linkResult.data || [];
-      const todayIntakes = intakeResult.data || [];
-      setRoutines((routineResult.data || []).map(r => ({
-        id: r.id,
-        name: r.name,
-        medicineIds: links.filter(l => l.routine_id === r.id).map(l => l.medication_id),
+      const result = await readRoutineCatalog({
+        all: () => getBackend().from("medication_routines").select("*")
+          .order("created_at").abortSignal(signal),
+        links: async () => {
+          const result = await linkRequest;
+          return { data: result.data?.map(row => row.routine_id), error: result.error };
+        },
+        byIds: ids => getBackend().from("medication_routines").select("*")
+          .in("id", ids).order("created_at").abortSignal(signal),
+      });
+      if (!current()) return;
+      const baseRoutines = result.rows.map(r => ({
+        id: r.id, name: r.name, medicineIds: [] as string[],
         time: String(r.scheduled_time).slice(0, 5),
         limit: String(r.deadline_time).slice(0, 5),
-        period: r.period_description,
-        durationValue: r.duration_value,
-        durationUnit: r.duration_unit,
-        noEndDate: r.has_no_end_date,
-        currentDay: r.current_day,
-        totalDays: r.total_days,
-        taken: todayIntakes.some(i => i.routine_id === r.id),
-        takenAt: todayIntakes.find(i => i.routine_id === r.id)?.taken_at || null,
-        paused: r.status === "paused",
-      })));
+        period: r.period_description, durationValue: r.duration_value,
+        durationUnit: r.duration_unit, noEndDate: r.has_no_end_date,
+        currentDay: r.current_day, totalDays: r.total_days,
+        taken: false, takenAt: null as string | null, paused: r.status === "paused",
+      }));
+      setRoutines(previous => baseRoutines.map(r => {
+        const existing = previous.find(old => old.id === r.id);
+        return { ...r, medicineIds: existing?.medicineIds || [],
+          taken: !!existing?.taken && knownIntakeToday(existing.takenAt), takenAt: knownIntakeToday(existing?.takenAt) ? existing!.takenAt : null };
+      }));
+      setRoutineLoading(false);
+      setRoutinesRecovered(result.recoveredFromLinks);
+      const [linksResult, intakesResult] = await detailsRequest;
+      if (!current()) return;
+      const links = linksResult.status === "fulfilled" && !linksResult.value.error && Array.isArray(linksResult.value.data) && linksResult.value.data.every(l => l && typeof l.routine_id === "string" && typeof l.medication_id === "string")
+        ? linksResult.value.data : null;
+      const intakes = intakesResult.status === "fulfilled" && !intakesResult.value.error && Array.isArray(intakesResult.value.data) && intakesResult.value.data.every(i => i && typeof i.routine_id === "string" && typeof i.taken_at === "string")
+        ? intakesResult.value.data : null;
+      if (!links || !intakes) setRoutineDetailsError("As rotinas foram carregadas, mas os medicamentos ou as confirmações estão indisponíveis. Atualize antes de alterar uma tomada.");
+      setTodayIntakesReady(intakes !== null);
+      setRoutines(previous => baseRoutines.map(r => {
+        const existing = previous.find(old => old.id === r.id);
+        return { ...r,
+          medicineIds: links ? links.filter(l => l.routine_id === r.id).map(l => l.medication_id) : existing?.medicineIds || [],
+          taken: intakes ? intakes.some(i => i.routine_id === r.id) : !!existing?.taken && knownIntakeToday(existing.takenAt),
+          takenAt: intakes ? intakes.find(i => i.routine_id === r.id)?.taken_at || null : knownIntakeToday(existing?.takenAt) ? existing!.takenAt : null,
+        };
+      }));
     } catch {
-      if (revision === authRevision.current) setNotice("Não foi possível carregar as rotinas. Tente atualizar a página.");
+      if (current()) setRoutineLoadError("Não foi possível carregar suas rotinas. Tente novamente; as rotinas cadastradas não foram excluídas.");
     } finally {
-      if (revision === authRevision.current) setDataLoading(false);
+      if (current()) { setRoutineLoading(false); setDataLoading(false); }
     }
     await catalogRequest;
   }, [loadMedicines]);
@@ -297,6 +334,11 @@ export default function Home() {
       setMedicineError("");
       setCatalogRecovered(false);
       setRoutines([]);
+      setRoutineLoading(true);
+      setRoutineLoadError("");
+      setRoutineDetailsError("");
+      setTodayIntakesReady(false);
+      setRoutinesRecovered(false);
       setReportIntakes([]);
       setHistoryIntakes([]);
       setReportOpen(false);
@@ -342,13 +384,26 @@ export default function Home() {
   }, [loadData, authRefresh]);
 
   useEffect(() => {
-    const updateCurrentTime = () => {
-      const now = new Date();
-      setCurrentTimeInMinutes(now.getHours() * 60 + now.getMinutes());
+    let day = dashboardClock(new Date()).dayKey;
+    const updateClock = () => {
+      const date = new Date();
+      setNow(date);
+      const nextDay = dashboardClock(date).dayKey;
+      if (nextDay !== day) {
+        day = nextDay;
+        if (user) void loadData();
+      }
     };
-    const intervalId = window.setInterval(updateCurrentTime, 30_000);
-    return () => window.clearInterval(intervalId);
-  }, []);
+    const onVisible = () => { if (document.visibilityState === "visible") updateClock(); };
+    const intervalId = window.setInterval(updateClock, 30_000);
+    window.addEventListener("focus", updateClock);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", updateClock);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loadData, user]);
 
   useEffect(
     () => () => {
@@ -358,11 +413,11 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (!user || dataLoading) return;
+    if (!user || dataLoading || routineLoadError || routineDetailsError) return;
     void syncRoutineNotifications(routines).catch((error: unknown) => {
       console.error("Não foi possível sincronizar as notificações", error);
     });
-  }, [user, dataLoading, routines]);
+  }, [user, dataLoading, routineLoadError, routineDetailsError, routines]);
 
   async function loadReport(dateKey: string) {
     const revision = authRevision.current;
@@ -756,7 +811,7 @@ export default function Home() {
     setRoutineOpen(true);
   }
   function openEditRoutine(routine: Routine) {
-    if (viewerMutationBlocked() || medicineLoading || medicineError) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError || dataLoading || routineLoadError || routineDetailsError) return;
     setEditingRoutine(routine);
     setSelected([...routine.medicineIds]);
     setMedicineToAdd("");
@@ -913,9 +968,14 @@ export default function Home() {
     setSelected((list) => list.filter((item) => item !== id));
   }
   async function toggleTaken(id: string) {
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError || dataLoading || routineLoadError || routineDetailsError || !todayIntakesReady) return;
     const routine = routines.find((r) => r.id === id);
     if (!routine || !user) return;
+    if (routine.takenAt && localDateKey(new Date(routine.takenAt)) !== localDateKey(new Date())) {
+      setNotice("O dia mudou. Atualizando a lista de rotinas.");
+      await loadData();
+      return;
+    }
     let registeredAt: string | null = null;
     if (routine.taken) {
       const start = new Date();
@@ -2320,10 +2380,10 @@ export default function Home() {
         )}
         <section className="mb-7">
           <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
-            <CalendarDays className="size-4" /> TERÇA-FEIRA, 15 DE SETEMBRO
+            <CalendarDays className="size-4" /><time dateTime={clock.dayKey} className="uppercase">{clock.label}</time>
           </p>
           <h1 className="text-2xl font-extrabold tracking-tight sm:text-4xl">
-            Boa tarde, Joaquim
+            {clock.greeting}
           </h1>
           <p className="mt-2 text-slate-500">
             Acompanhe suas rotinas e registre os horários.
@@ -2336,11 +2396,11 @@ export default function Home() {
                 Progresso de hoje
               </p>
               <p className="mt-1 text-4xl font-extrabold">
-                {done} de {active.length}
+                {routineLoading || routineLoadError ? "—" : `${confirmationsReady ? done : "—"} de ${active.length}`}
               </p>
-              <p className="mb-6 text-sm text-blue-100">rotinas concluídas</p>
+              <p className="mb-6 text-sm text-blue-100">{routineLoadError ? "Rotinas indisponíveis" : !confirmationsReady ? "Atualizando confirmações…" : "rotinas concluídas"}</p>
               <Progress
-                value={progress}
+                value={confirmationsReady ? progress : 0}
                 className="h-2 bg-white/20 [&>div]:bg-white"
               />
             </CardContent>
@@ -2348,13 +2408,13 @@ export default function Home() {
           <Summary
             icon={<AlarmClock />}
             label="Próxima rotina"
-            value={next?.time || "—"}
-            note={next?.name || "Nenhuma pendência"}
+            value={confirmationsReady ? next?.time || "—" : "—"}
+            note={routineLoading ? "Carregando rotinas…" : routineLoadError ? "Atualize as rotinas" : !confirmationsReady ? "Confirmações indisponíveis" : next?.name || "Nenhuma pendência"}
           />
           <Summary
             icon={<BellRing />}
             label="Rotinas ativas"
-            value={String(active.length)}
+            value={routineLoading ? "…" : routineLoadError ? "—" : String(active.length)}
             note={medicineLoading ? "Carregando medicamentos…" : medicineError ? "Medicamentos indisponíveis" : medicines.length + " medicamentos cadastrados"}
           />
         </section>
@@ -2418,6 +2478,7 @@ export default function Home() {
               Nome da rotina, medicamentos e horário.
             </p>
           </div>
+          <Button type="button" variant="outline" disabled={dataLoading} onClick={() => void loadData()} className="rounded-xl">{dataLoading && <LoaderCircle className="animate-spin" />} Atualizar rotinas</Button>
           {routines.length > 0 && (
             <span className="shrink-0 rounded-full bg-blue-100 px-4 py-2 text-sm font-extrabold text-blue-700">
               {routines[0].noEndDate
@@ -2426,8 +2487,11 @@ export default function Home() {
             </span>
           )}
         </div>
+        {routineLoadError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{routineLoadError}</p><Button variant="outline" disabled={dataLoading} onClick={() => void loadData()} className="mt-3 rounded-xl">Tentar carregar rotinas novamente</Button></div>}
+        {routineDetailsError && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{routineDetailsError}</p>}
+        {routinesRecovered && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">Mostrando as rotinas com medicamentos vinculados. Atualize para consultar todas as rotinas.</p>}
         <section className="grid gap-4">
-          {routines.length === 0 && (
+          {routines.length === 0 && !routineLoading && !routineLoadError && (
             <Card className="rounded-3xl border-dashed border-slate-300 bg-white">
               <CardContent className="grid justify-items-center gap-3 p-10 text-center">
                 <div className="grid size-14 place-items-center rounded-2xl bg-blue-50 text-blue-600">
@@ -2500,7 +2564,7 @@ export default function Home() {
                     {!r.paused && (
                       <Button
                         onClick={() => toggleTaken(r.id)}
-                        disabled={isViewer}
+                        disabled={isViewer || medicineLoading || !!medicineError || dataLoading || !!routineLoadError || !!routineDetailsError || !todayIntakesReady}
                         variant={r.taken ? "outline" : "default"}
                         className={
                           "h-11 w-full rounded-xl sm:w-auto " +
@@ -2570,10 +2634,10 @@ export default function Home() {
             </Card>
           ))}
         </section>
-        <output className="mt-6 flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+        {notice && <output className="mt-6 flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
           <BellRing className="size-4" />
           {notice}
-        </output>
+        </output>}
         <p className="mt-7 text-center text-xs text-slate-400">
           Início da utilização do sistema no dia 21 de Setembro de 2026
         </p>
