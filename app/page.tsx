@@ -49,6 +49,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
+import { dashboardClock } from "@/lib/dashboard-clock";
+import { readRoutineCatalog } from "@/lib/routine-catalog";
+import { readMedicationCatalog, type MedicationLinkRead } from "@/lib/medication-catalog";
 import { syncRoutineNotifications } from "@/lib/native-notifications";
 import {
   emptyPrescriptionDraft,
@@ -85,6 +88,16 @@ export default function Home() {
   const [user, setUser] = useState<ApplicationUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
+  const [routineLoading, setRoutineLoading] = useState(true);
+  const [routineLoadError, setRoutineLoadError] = useState("");
+  const [routineDetailsError, setRoutineDetailsError] = useState("");
+  const [todayIntakesReady, setTodayIntakesReady] = useState(false);
+  const [routinesRecovered, setRoutinesRecovered] = useState(false);
+  const routineRequest = useRef(0);
+  const [medicineLoading, setMedicineLoading] = useState(true);
+  const [medicineError, setMedicineError] = useState("");
+  const [catalogRecovered, setCatalogRecovered] = useState(false);
+  const medicineRequest = useRef(0);
   const [authNotice, setAuthNotice] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "signup" | "verify" | "recover" | "reset">("login");
   const [pendingAuthEmail, setPendingAuthEmail] = useState("");
@@ -132,13 +145,11 @@ export default function Home() {
   const [selected, setSelected] = useState<string[]>([]);
   const [medicineToAdd, setMedicineToAdd] = useState("");
   const [noEndDate, setNoEndDate] = useState(false);
-  const [notice, setNotice] = useState(
-    "A próxima rotina está programada para 19:00.",
-  );
-  const [currentTimeInMinutes, setCurrentTimeInMinutes] = useState(() => {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes();
-  });
+  const [notice, setNotice] = useState("");
+  const [now, setNow] = useState(() => new Date());
+  const clock = dashboardClock(now);
+  const currentTimeInMinutes = clock.minutes;
+  const confirmationsReady = todayIntakesReady && !routineLoading && !routineLoadError;
   const isViewer = user?.role === "viewer";
   const viewerMutationBlocked = () => {
     if (!isViewer) return false;
@@ -201,68 +212,115 @@ export default function Home() {
       }),
     );
 
+  const loadMedicines = useCallback(async (links?: PromiseLike<MedicationLinkRead>) => {
+    const revision = authRevision.current;
+    const request = ++medicineRequest.current;
+    setMedicineLoading(true);
+    setMedicineError("");
+    setCatalogRecovered(false);
+    const signal = AbortSignal.timeout(20_000);
+    try {
+      const result = await readMedicationCatalog({
+        all: () => getBackend().from("medications")
+          .select("id,name,dosage,reference_url").order("created_at").abortSignal(signal),
+        links: async () => {
+          const result = await (links ?? getBackend().from("routine_medications")
+            .select("routine_id,medication_id").abortSignal(signal));
+          return { data: result.data?.map(row => row.medication_id), error: result.error };
+        },
+        byIds: ids => getBackend().from("medications")
+          .select("id,name,dosage,reference_url").in("id", ids).order("created_at").abortSignal(signal),
+      });
+      if (revision !== authRevision.current || request !== medicineRequest.current) return;
+      setMedicines(result.rows.map(m => ({
+        id: m.id, name: m.name, dosage: m.dosage, link: m.reference_url || "",
+      })));
+      setCatalogRecovered(result.recoveredFromLinks);
+    } catch {
+      if (revision === authRevision.current && request === medicineRequest.current) {
+        setMedicineError("Não foi possível carregar seus medicamentos. Tente novamente antes de cadastrar ou configurar uma rotina.");
+      }
+    } finally {
+      if (revision === authRevision.current && request === medicineRequest.current) setMedicineLoading(false);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     const revision = authRevision.current;
+    const request = ++routineRequest.current;
+    const current = () => revision === authRevision.current && request === routineRequest.current;
     setDataLoading(true);
+    setRoutineLoading(true);
+    setRoutineLoadError("");
+    setRoutineDetailsError("");
+    setTodayIntakesReady(false);
+    setRoutinesRecovered(false);
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    const [medicineResult, routineResult, linkResult, intakeResult] =
-      await Promise.all([
-        getBackend()
-          .from("medications")
-          .select("id,name,dosage,reference_url")
-          .order("created_at"),
-        getBackend().from("medication_routines").select("*").order("created_at"),
-        getBackend().from("routine_medications").select("routine_id,medication_id"),
-        getBackend()
-          .from("medication_intakes")
-          .select("routine_id,taken_at")
-          .gte("taken_at", startOfDay.toISOString()),
-      ]);
-    if (revision !== authRevision.current) return;
-    const error =
-      medicineResult.error ||
-      routineResult.error ||
-      linkResult.error ||
-      intakeResult.error;
-    if (error) {
-      setNotice("Não foi possível carregar os dados: " + error.message);
-      setDataLoading(false);
-      return;
-    }
-    setMedicines(
-      (medicineResult.data || []).map((m) => ({
-        id: m.id,
-        name: m.name,
-        dosage: m.dosage,
-        link: m.reference_url || "",
-      })),
-    );
-    const links = linkResult.data || [];
-    const todayIntakes = intakeResult.data || [];
-    setRoutines(
-      (routineResult.data || []).map((r) => ({
-        id: r.id,
-        name: r.name,
-        medicineIds: links
-          .filter((l) => l.routine_id === r.id)
-          .map((l) => l.medication_id),
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setDate(endOfDay.getDate() + 1);
+    const knownIntakeToday = (at?: string | null) => !!at && new Date(at) >= startOfDay && new Date(at) < endOfDay;
+    const signal = AbortSignal.timeout(20_000);
+    // SELECT * mantém compatibilidade com vínculos anteriores à ampliação de doses.
+    const linkRequest = Promise.resolve(getBackend().from("routine_medications")
+      .select("*").abortSignal(signal));
+    const intakeRequest = Promise.resolve(getBackend().from("medication_intakes")
+      .select("id,routine_id,taken_at").gte("taken_at", startOfDay.toISOString())
+      .lt("taken_at", endOfDay.toISOString()).abortSignal(signal));
+    // Registra os handlers imediatamente, inclusive se a leitura principal falhar.
+    const detailsRequest = Promise.allSettled([linkRequest, intakeRequest]);
+    const catalogRequest = loadMedicines(linkRequest);
+    try {
+      const result = await readRoutineCatalog({
+        all: () => getBackend().from("medication_routines").select("*")
+          .order("created_at").abortSignal(signal),
+        links: async () => {
+          const result = await linkRequest;
+          return { data: result.data?.map(row => row.routine_id), error: result.error };
+        },
+        byIds: ids => getBackend().from("medication_routines").select("*")
+          .in("id", ids).order("created_at").abortSignal(signal),
+      });
+      if (!current()) return;
+      const baseRoutines = result.rows.map(r => ({
+        id: r.id, name: r.name, medicineIds: [] as string[],
         time: String(r.scheduled_time).slice(0, 5),
         limit: String(r.deadline_time).slice(0, 5),
-        period: r.period_description,
-        durationValue: r.duration_value,
-        durationUnit: r.duration_unit,
-        noEndDate: r.has_no_end_date,
-        currentDay: r.current_day,
-        totalDays: r.total_days,
-        taken: todayIntakes.some((i) => i.routine_id === r.id),
-        takenAt:
-          todayIntakes.find((i) => i.routine_id === r.id)?.taken_at || null,
-        paused: r.status === "paused",
-      })),
-    );
-    setDataLoading(false);
-  }, []);
+        period: r.period_description, durationValue: r.duration_value,
+        durationUnit: r.duration_unit, noEndDate: r.has_no_end_date,
+        currentDay: r.current_day, totalDays: r.total_days,
+        taken: false, takenAt: null as string | null, paused: r.status === "paused",
+      }));
+      setRoutines(previous => baseRoutines.map(r => {
+        const existing = previous.find(old => old.id === r.id);
+        return { ...r, medicineIds: existing?.medicineIds || [],
+          taken: !!existing?.taken && knownIntakeToday(existing.takenAt), takenAt: knownIntakeToday(existing?.takenAt) ? existing!.takenAt : null };
+      }));
+      setRoutineLoading(false);
+      setRoutinesRecovered(result.recoveredFromLinks);
+      const [linksResult, intakesResult] = await detailsRequest;
+      if (!current()) return;
+      const links = linksResult.status === "fulfilled" && !linksResult.value.error && Array.isArray(linksResult.value.data) && linksResult.value.data.every(l => l && typeof l.routine_id === "string" && typeof l.medication_id === "string")
+        ? linksResult.value.data : null;
+      const intakes = intakesResult.status === "fulfilled" && !intakesResult.value.error && Array.isArray(intakesResult.value.data) && intakesResult.value.data.every(i => i && typeof i.routine_id === "string" && typeof i.taken_at === "string")
+        ? intakesResult.value.data : null;
+      if (!links || !intakes) setRoutineDetailsError("As rotinas foram carregadas, mas os medicamentos ou as confirmações estão indisponíveis. Atualize antes de alterar uma tomada.");
+      setTodayIntakesReady(intakes !== null);
+      setRoutines(previous => baseRoutines.map(r => {
+        const existing = previous.find(old => old.id === r.id);
+        return { ...r,
+          medicineIds: links ? links.filter(l => l.routine_id === r.id).map(l => l.medication_id) : existing?.medicineIds || [],
+          taken: intakes ? intakes.some(i => i.routine_id === r.id) : !!existing?.taken && knownIntakeToday(existing.takenAt),
+          takenAt: intakes ? intakes.find(i => i.routine_id === r.id)?.taken_at || null : knownIntakeToday(existing?.takenAt) ? existing!.takenAt : null,
+        };
+      }));
+    } catch {
+      if (current()) setRoutineLoadError("Não foi possível carregar suas rotinas. Tente novamente; as rotinas cadastradas não foram excluídas.");
+    } finally {
+      if (current()) { setRoutineLoading(false); setDataLoading(false); }
+    }
+    await catalogRequest;
+  }, [loadMedicines]);
 
   useEffect(() => {
     let active = true;
@@ -272,7 +330,15 @@ export default function Home() {
       const revision = ++authRevision.current;
       setUser(null);
       setMedicines([]);
+      setMedicineLoading(true);
+      setMedicineError("");
+      setCatalogRecovered(false);
       setRoutines([]);
+      setRoutineLoading(true);
+      setRoutineLoadError("");
+      setRoutineDetailsError("");
+      setTodayIntakesReady(false);
+      setRoutinesRecovered(false);
       setReportIntakes([]);
       setHistoryIntakes([]);
       setReportOpen(false);
@@ -318,13 +384,26 @@ export default function Home() {
   }, [loadData, authRefresh]);
 
   useEffect(() => {
-    const updateCurrentTime = () => {
-      const now = new Date();
-      setCurrentTimeInMinutes(now.getHours() * 60 + now.getMinutes());
+    let day = dashboardClock(new Date()).dayKey;
+    const updateClock = () => {
+      const date = new Date();
+      setNow(date);
+      const nextDay = dashboardClock(date).dayKey;
+      if (nextDay !== day) {
+        day = nextDay;
+        if (user) void loadData();
+      }
     };
-    const intervalId = window.setInterval(updateCurrentTime, 30_000);
-    return () => window.clearInterval(intervalId);
-  }, []);
+    const onVisible = () => { if (document.visibilityState === "visible") updateClock(); };
+    const intervalId = window.setInterval(updateClock, 30_000);
+    window.addEventListener("focus", updateClock);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", updateClock);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loadData, user]);
 
   useEffect(
     () => () => {
@@ -334,11 +413,11 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (!user || dataLoading) return;
+    if (!user || dataLoading || routineLoadError || routineDetailsError) return;
     void syncRoutineNotifications(routines).catch((error: unknown) => {
       console.error("Não foi possível sincronizar as notificações", error);
     });
-  }, [user, dataLoading, routines]);
+  }, [user, dataLoading, routineLoadError, routineDetailsError, routines]);
 
   async function loadReport(dateKey: string) {
     const revision = authRevision.current;
@@ -609,7 +688,7 @@ export default function Home() {
       },
     ]);
     setMedicineOpen(false);
-    setNotice(data.name + " foi salvo no Supabase.");
+    setNotice(data.name + " foi salvo.");
   }
 
   function choosePrescription(file?: File) {
@@ -724,7 +803,7 @@ export default function Home() {
     );
   }
   function openNewRoutine() {
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError) return;
     setEditingRoutine(null);
     setSelected([]);
     setMedicineToAdd("");
@@ -732,7 +811,7 @@ export default function Home() {
     setRoutineOpen(true);
   }
   function openEditRoutine(routine: Routine) {
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError || dataLoading || routineLoadError || routineDetailsError) return;
     setEditingRoutine(routine);
     setSelected([...routine.medicineIds]);
     setMedicineToAdd("");
@@ -741,7 +820,7 @@ export default function Home() {
   }
   async function saveRoutine(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError) return;
     const d = new FormData(e.currentTarget);
     const name = String(d.get("routineName"));
     if (!user) return;
@@ -889,9 +968,14 @@ export default function Home() {
     setSelected((list) => list.filter((item) => item !== id));
   }
   async function toggleTaken(id: string) {
-    if (viewerMutationBlocked()) return;
+    if (viewerMutationBlocked() || medicineLoading || medicineError || dataLoading || routineLoadError || routineDetailsError || !todayIntakesReady) return;
     const routine = routines.find((r) => r.id === id);
     if (!routine || !user) return;
+    if (routine.takenAt && localDateKey(new Date(routine.takenAt)) !== localDateKey(new Date())) {
+      setNotice("O dia mudou. Atualizando a lista de rotinas.");
+      await loadData();
+      return;
+    }
     let registeredAt: string | null = null;
     if (routine.taken) {
       const start = new Date();
@@ -2095,7 +2179,7 @@ export default function Home() {
               <DialogTrigger asChild>
                 <Button
                   onClick={openNewRoutine}
-                  disabled={isViewer}
+                  disabled={isViewer || medicineLoading || !!medicineError}
                   title={isViewer ? "Perfil somente leitura" : undefined}
                   className="col-span-2 h-11 rounded-xl bg-blue-600 hover:bg-blue-700 sm:col-span-1"
                 >
@@ -2193,7 +2277,7 @@ export default function Home() {
                         })}
                       </div>
                     )}
-                    {medicines.length === 0 && (
+                    {!medicineLoading && !medicineError && medicines.length === 0 && (
                       <p className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
                         Cadastre um medicamento antes de criar a rotina.
                       </p>
@@ -2276,7 +2360,7 @@ export default function Home() {
                       : "Exemplos: 30 dias ou 12 semanas."}
                   </p>
                   <Button
-                    disabled={selected.length === 0}
+                    disabled={selected.length === 0 || medicineLoading || !!medicineError}
                     className="h-12 rounded-xl bg-blue-600"
                   >
                     {editingRoutine ? "Salvar alterações" : "Salvar rotina"}
@@ -2296,10 +2380,10 @@ export default function Home() {
         )}
         <section className="mb-7">
           <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
-            <CalendarDays className="size-4" /> TERÇA-FEIRA, 15 DE SETEMBRO
+            <CalendarDays className="size-4" /><time dateTime={clock.dayKey} className="uppercase">{clock.label}</time>
           </p>
           <h1 className="text-2xl font-extrabold tracking-tight sm:text-4xl">
-            Boa tarde, Joaquim
+            {clock.greeting}
           </h1>
           <p className="mt-2 text-slate-500">
             Acompanhe suas rotinas e registre os horários.
@@ -2312,11 +2396,11 @@ export default function Home() {
                 Progresso de hoje
               </p>
               <p className="mt-1 text-4xl font-extrabold">
-                {done} de {active.length}
+                {routineLoading || routineLoadError ? "—" : `${confirmationsReady ? done : "—"} de ${active.length}`}
               </p>
-              <p className="mb-6 text-sm text-blue-100">rotinas concluídas</p>
+              <p className="mb-6 text-sm text-blue-100">{routineLoadError ? "Rotinas indisponíveis" : !confirmationsReady ? "Atualizando confirmações…" : "rotinas concluídas"}</p>
               <Progress
-                value={progress}
+                value={confirmationsReady ? progress : 0}
                 className="h-2 bg-white/20 [&>div]:bg-white"
               />
             </CardContent>
@@ -2324,27 +2408,35 @@ export default function Home() {
           <Summary
             icon={<AlarmClock />}
             label="Próxima rotina"
-            value={next?.time || "—"}
-            note={next?.name || "Nenhuma pendência"}
+            value={confirmationsReady ? next?.time || "—" : "—"}
+            note={routineLoading ? "Carregando rotinas…" : routineLoadError ? "Atualize as rotinas" : !confirmationsReady ? "Confirmações indisponíveis" : next?.name || "Nenhuma pendência"}
           />
           <Summary
             icon={<BellRing />}
             label="Rotinas ativas"
-            value={String(active.length)}
-            note={medicines.length + " medicamentos cadastrados"}
+            value={routineLoading ? "…" : routineLoadError ? "—" : String(active.length)}
+            note={medicineLoading ? "Carregando medicamentos…" : medicineError ? "Medicamentos indisponíveis" : medicines.length + " medicamentos cadastrados"}
           />
         </section>
         <section className="mb-8">
-          <div className="mb-4">
-            <h2 className="text-xl font-bold">Medicamentos cadastrados</h2>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-xl font-bold">Medicamentos cadastrados</h2>
             <p className="text-sm text-slate-500">
               Lista completa de medicamentos e respectivas dosagens.
-            </p>
+            </p></div>
+            <Button variant="outline" disabled={medicineLoading} onClick={() => void loadMedicines()} className="rounded-xl">
+              {medicineLoading && <LoaderCircle className="animate-spin" />} Atualizar medicamentos
+            </Button>
           </div>
+          {medicineError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p>{medicineError}</p>
+            <Button variant="outline" disabled={medicineLoading} onClick={() => void loadMedicines()} className="mt-3 rounded-xl">Tentar novamente</Button>
+          </div>}
+          {catalogRecovered && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">Mostrando os medicamentos usados nas rotinas. Atualize a lista para consultar o cadastro completo.</p>}
           {medicines.length === 0 ? (
             <Card className="rounded-3xl border-dashed border-slate-300 bg-white">
               <CardContent className="p-6 text-sm text-slate-500">
-                Nenhum medicamento cadastrado.
+                {medicineLoading ? "Carregando medicamentos…" : medicineError ? "O cadastro está indisponível. Seus medicamentos não foram excluídos." : "Nenhum medicamento cadastrado."}
               </CardContent>
             </Card>
           ) : (
@@ -2386,6 +2478,7 @@ export default function Home() {
               Nome da rotina, medicamentos e horário.
             </p>
           </div>
+          <Button type="button" variant="outline" disabled={dataLoading} onClick={() => void loadData()} className="rounded-xl">{dataLoading && <LoaderCircle className="animate-spin" />} Atualizar rotinas</Button>
           {routines.length > 0 && (
             <span className="shrink-0 rounded-full bg-blue-100 px-4 py-2 text-sm font-extrabold text-blue-700">
               {routines[0].noEndDate
@@ -2394,18 +2487,19 @@ export default function Home() {
             </span>
           )}
         </div>
+        {routineLoadError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{routineLoadError}</p><Button variant="outline" disabled={dataLoading} onClick={() => void loadData()} className="mt-3 rounded-xl">Tentar carregar rotinas novamente</Button></div>}
+        {routineDetailsError && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{routineDetailsError}</p>}
+        {routinesRecovered && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">Mostrando as rotinas com medicamentos vinculados. Atualize para consultar todas as rotinas.</p>}
         <section className="grid gap-4">
-          {routines.length === 0 && (
+          {routines.length === 0 && !routineLoading && !routineLoadError && (
             <Card className="rounded-3xl border-dashed border-slate-300 bg-white">
               <CardContent className="grid justify-items-center gap-3 p-10 text-center">
                 <div className="grid size-14 place-items-center rounded-2xl bg-blue-50 text-blue-600">
                   <Pill />
                 </div>
                 <div>
-                  <h3 className="font-bold">Nenhum medicamento cadastrado</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Cadastre um medicamento para começar a criar suas rotinas.
-                  </p>
+                  <h3 className="font-bold">{dataLoading ? "Carregando rotinas…" : "Nenhuma rotina disponível"}</h3>
+                  <p className="mt-1 text-sm text-slate-500">{medicineLoading ? "Aguarde o carregamento dos medicamentos." : medicineError ? "Atualize o cadastro de medicamentos antes de configurar uma rotina." : medicines.length ? "Seus medicamentos estão cadastrados. Crie uma rotina para organizar os horários." : "Cadastre um medicamento para começar a criar suas rotinas."}</p>
                 </div>
                 <Button
                   onClick={() => setMedicineOpen(true)}
@@ -2470,7 +2564,7 @@ export default function Home() {
                     {!r.paused && (
                       <Button
                         onClick={() => toggleTaken(r.id)}
-                        disabled={isViewer}
+                        disabled={isViewer || medicineLoading || !!medicineError || dataLoading || !!routineLoadError || !!routineDetailsError || !todayIntakesReady}
                         variant={r.taken ? "outline" : "default"}
                         className={
                           "h-11 w-full rounded-xl sm:w-auto " +
@@ -2540,10 +2634,10 @@ export default function Home() {
             </Card>
           ))}
         </section>
-        <output className="mt-6 flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+        {notice && <output className="mt-6 flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
           <BellRing className="size-4" />
           {notice}
-        </output>
+        </output>}
         <p className="mt-7 text-center text-xs text-slate-400">
           Início da utilização do sistema no dia 21 de Setembro de 2026
         </p>
