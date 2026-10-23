@@ -124,11 +124,12 @@ foram executados com sucesso. Não repetir `prepare`, `finalize` ou `activate`.
    sobrescrever cópias existentes sem comparação do estado esperado.
 7. [x] Atualizar o backup remoto com o snapshot final, vincular identidades e conferir
    papéis. Habilitar as permissões de escrita no Neon em transação e ativar o frontend.
-8. [ ] As pessoas validam suas sessões e dados no domínio principal com as novas
-   senhas. Verificação administrativa das identidades/vínculos concluída.
-   Web pública: HTTP 200, hidratação, formulários e zero pageerrors. Atualização
-   do APK, sua origem no Auth, notificações em dispositivo e PHP seguem pendentes.
-   Usar a web; manter Supabase preservado durante a observação.
+8. [x] O usuário confirmou o acesso das duas contas, dados e permissões em produção.
+   A verificação administrativa das identidades/vínculos também passou.
+   Web pública: HTTP 200, hidratação, formulários e zero pageerrors.
+9. [ ] Atualização do APK, sua origem no Auth e notificações em dispositivo ficam
+   como última etapa, após as funcionalidades web de estoque. PHP opcional segue
+   pendente de validação quando utilizado. Usar a web e manter Supabase preservado.
 
 Se qualquer pré-requisito faltar, manter a origem operante e o destino fechado
 para escrita. `freeze-source` instala triggers transacionais somente nas quatro

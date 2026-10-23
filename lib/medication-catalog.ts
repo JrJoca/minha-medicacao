@@ -3,7 +3,9 @@ export type MedicationRecord = {
   name: string;
   dosage: string;
   reference_url: string | null;
+  is_active?: boolean;
 };
+export type Medication = { id: string; name: string; dosage: string; link?: string; active: boolean };
 export type CatalogRead = { data: unknown; error: unknown };
 export type MedicationLinkRead = {
   data: { routine_id: string; medication_id: string }[] | null;
@@ -20,7 +22,8 @@ function records(result: CatalogRead): MedicationRecord[] {
   if (result.error || !Array.isArray(result.data)) throw new Error("catalog-read");
   if (!result.data.every(row => row && typeof row.id === "string" &&
     typeof row.name === "string" && typeof row.dosage === "string" &&
-    (row.reference_url === null || typeof row.reference_url === "string"))) {
+    (row.reference_url === null || typeof row.reference_url === "string") &&
+    (row.is_active === undefined || typeof row.is_active === "boolean"))) {
     throw new Error("catalog-shape");
   }
   return result.data;

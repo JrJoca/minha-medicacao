@@ -6,7 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test:migration": "node --test tests/neon-migration.test.mjs tests/neon-deployment.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py' && pnpm test:catalog",
+    "test:migration": "node --test tests/neon-migration.test.mjs tests/neon-deployment.test.mjs tests/neon-stock.test.mjs tests/routine-stock.test.mjs tests/routine-stock-upgrade.test.mjs && pnpm test:stock-ui && python3 -m unittest discover -s tests -p 'test_*.py' && pnpm test:catalog && pnpm test:medication-control",
+    "test:stock-ui": "node --experimental-strip-types --test tests/medication-stock-ui.test.mjs tests/inventory-ui.test.mjs",
     "install:ci": "bash scripts/install-pnpm.sh",
     "dev": "node scripts/run-framework.mjs dev",
     "build": "node scripts/run-framework.mjs build",
@@ -16,7 +17,8 @@
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "test:catalog": "node --experimental-strip-types --test tests/medication-catalog.test.mjs tests/dashboard-routines.test.mjs"
+    "test:catalog": "node --experimental-strip-types --test tests/medication-catalog.test.mjs tests/dashboard-routines.test.mjs",
+    "test:medication-control": "node --experimental-strip-types --test tests/medication-control.test.mjs tests/medication-control-upgrade.test.mjs tests/stock-forecast.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

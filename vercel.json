@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
+  "cleanUrls": true,
   "installCommand": "corepack pnpm install --frozen-lockfile",
   "buildCommand": "node scripts/build-neon-deployment.mjs",
   "outputDirectory": "dist/client"

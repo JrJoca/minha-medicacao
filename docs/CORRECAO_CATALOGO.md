@@ -25,9 +25,9 @@ saudação fixas. A correção:
   do dia anterior como concluída hoje.
 - Remove as mensagens fixas de próxima rotina e gravação no Supabase.
 
-Não altera SQL, RLS, contas, senhas ou dados clínicos. Este PR se baseia na versão
-atual de produção e não inclui a ampliação de estoque do PR #3. A mesma correção
-foi incluída no PR #3 para manter a interface de estoque compatível.
+Não altera SQL, RLS, contas, senhas ou dados clínicos. O PR #4 se baseia na versão
+atual de produção e não inclui a ampliação de estoque do PR #3. Esta correção também integra o PR #3 para manter a interface de estoque compatível;
+medicamentos e rotinas continuam visíveis mesmo se o serviço de estoque falhar.
 
 Validação automatizada: 68 testes locais (28 de banco/migração, 22 de proteção
 do executor e 18 de catálogo/data/rotinas), TypeScript, lint e build. O lint
