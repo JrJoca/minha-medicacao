@@ -57,7 +57,7 @@ da base GitHub/Vercel.
 | 13 | [ ] Previsão de término | Simular próximas ocorrências de todas as rotinas do medicamento, respeitando saldo, doses já confirmadas, horários, pausas e fim. | Exibe última dose integralmente coberta e primeira ocorrência com falta; explica casos sem previsão. |
 | 14 | [x] Painel de estoque | Saldo, embalagem, unidade, consumo diário derivado das rotinas, duração e aviso de saldo negativo. | Implementado para revisão, com consulta de visualizador e estados desconhecido/zero/falta. |
 | 15 | [ ] Integrações e regressão web | Integrar relatório/histórico, manter OCR revisável, WhatsApp com horário persistido e envio manual e ordenação/próxima rotina. | Fluxos web existentes verificados; OCR não inventa estoque. Android fica na última etapa. |
-| 16 | [x] Testes e apresentação desta entrega | Testes de banco, permissões, idempotência, concorrência, migração e interface com fixtures; SQL e plano de implantação no PR. | 110 testes locais, TypeScript, lint e build; evidências de API/navegador sintéticos. Não equivale a publicação. |
+| 16 | [x] Testes e apresentação desta entrega | Testes de banco, permissões, idempotência, concorrência, migração e interface com fixtures; SQL e plano de implantação no PR. | 128 testes locais, TypeScript, lint e build; evidências de API/navegador sintéticos. Não equivale a publicação. |
 | 17 | [ ] Implantação controlada, após revisão | Fazer backup privado e verificar restauração; aplicar mudanças compatíveis, publicar versão aprovada e validar o resultado. | Autorização explícita para produção, SHA conferido e smoke seguro; sem escrita de testes em dados reais. |
 | 18 | [ ] Android — última etapa | Atualizar o APK com todas as funcionalidades web concluídas, origem no Neon Auth e notificações. | APK gerado e validado em dispositivo após as entregas anteriores. |
 
@@ -91,7 +91,7 @@ Login/cadastro/logout e sessão; perfil visualizador; medicamentos e links; sele
 
 ## Validação e critérios de aceite
 
-Resultados iniciais de onboarding abaixo foram superados: 110 testes passam após
+Resultados iniciais de onboarding abaixo foram superados: 128 testes passam após
 a ampliação por rotina e a interface de estoque, TypeScript/lint/build passam (lint com um aviso de imagem), e
 Auth/Data API foram validados com fixtures Neon. As duas contas de produção foram
 confirmadas pelo usuário. APK permanece como última etapa. O histórico inicial

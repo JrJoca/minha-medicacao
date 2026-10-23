@@ -24,11 +24,14 @@ function parseStockDraft(draft:StockDraft) {
   return {values,errors,valid:Object.keys(errors).length===0};
 }
 
-export function MedicationInventory({ medicines, user, dataLoading, revision }: {
+export function MedicationInventory({ medicines, user, dataLoading, revision, catalogError, catalogRecovered, onReloadCatalog }: {
   medicines: Medicine[];
   user: ApplicationUser;
   dataLoading: boolean;
   revision: number;
+  catalogError?: string;
+  catalogRecovered?: boolean;
+  onReloadCatalog?: () => void;
 }) {
   const [stocks, setStocks] = useState<Record<string, Inventory>>({});
   const [loading, setLoading] = useState(true);
@@ -127,7 +130,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision }: 
           <h2 id="medication-list-title" className="text-xl font-bold">Medicamentos cadastrados</h2>
           <p className="mt-1 text-sm text-slate-500">Consulte seus medicamentos e acompanhe o estoque disponível.</p>
         </div>
-        <Button type="button" variant="outline" disabled={loading || saving || dataLoading} onClick={() => setRefresh(value => value + 1)} className="h-10 rounded-xl bg-white">
+        <Button type="button" variant="outline" disabled={loading || saving || dataLoading} onClick={() => { setRefresh(value => value + 1); onReloadCatalog?.(); }} className="h-10 rounded-xl bg-white">
           <RefreshCw className={loading ? "animate-spin" : ""} /> Atualizar saldos
         </Button>
       </div>
@@ -135,6 +138,8 @@ export function MedicationInventory({ medicines, user, dataLoading, revision }: 
         <p className="font-semibold">Estoque atualizado pelas tomadas.</p>
         <p>Ao confirmar uma rotina configurada, as quantidades são descontadas. Ao desfazer, a baixa original é estornada. Confira o saldo físico para registrar reposições ou ajustes.</p>
       </div>
+      {catalogError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{catalogError}</p><Button variant="outline" disabled={dataLoading} onClick={onReloadCatalog} className="mt-3 rounded-xl">Tentar novamente</Button></div>}
+      {catalogRecovered && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">Mostrando os medicamentos usados nas rotinas. Atualize a lista para consultar o cadastro completo.</p>}
       {loadError && <div role="alert" className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
         <p>{loadError}</p>
         <Button type="button" variant="outline" className="mt-3 rounded-xl bg-white" onClick={() => setRefresh(value => value + 1)}>Tentar novamente</Button>
@@ -143,7 +148,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision }: 
       {!loading && !loadError && medicines.length > 0 && <p className="mb-3 text-sm text-slate-500">{informed} de {medicines.length} com saldo informado</p>}
       {medicines.length === 0 ? (
         <Card className="rounded-3xl border-dashed border-slate-300 bg-white">
-          <CardContent className="text-sm text-slate-500">{dataLoading ? "Carregando medicamentos…" : "Nenhum medicamento cadastrado."}</CardContent>
+          <CardContent className="text-sm text-slate-500">{dataLoading ? "Carregando medicamentos…" : catalogError ? "O cadastro está indisponível. Seus medicamentos não foram excluídos." : "Nenhum medicamento cadastrado."}</CardContent>
         </Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
