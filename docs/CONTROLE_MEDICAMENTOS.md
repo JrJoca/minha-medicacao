@@ -1,7 +1,8 @@
 # Controle de medicamentos, compras e previsão
 
-Implementado no PR #3 para revisão. A produção continua na correção do painel do
-PR #4. As migrações 004 e 005 e a interface desta entrega não foram publicadas.
+A base de controle de medicamentos/compras (004 e 005) e a melhoria do formulário
+de doses (PR #5) já estão publicadas. Esta evolução acrescenta editar cadastro e
+corrigir compras com auditoria (migração 006), ensaiada para revisão/implantação.
 
 ## Página e ativação
 
@@ -16,6 +17,12 @@ já vinculado, identificado como desativado; não pode adicionar outro desativad
 A desativação não pausa tratamentos existentes. Para interromper uma rotina, use
 Pausar/Arquivar. Reativar disponibiliza o remédio para novas rotinas.
 
+Em **Editar cadastro**, o proprietário pode corrigir nome, dosagem e link de
+referência. O cadastro mantém seu ID e sua situação; saldo físico, compras,
+doses e registros anteriores permanecem. O nome e a dosagem atualizados passam a
+aparecer nas rotinas vinculadas e nas opções de seleção. Cancelar descarta o
+rascunho; erros de salvamento mantêm os valores para uma nova tentativa.
+
 Todos os medicamentos anteriores recebem `is_active=true`. O visualizador lê os
 registros e o histórico, sem permissão de ativar, desativar ou movimentar estoque.
 
@@ -28,8 +35,11 @@ registros e o histórico, sem permissão de ativar, desativar ou movimentar esto
 3. A compra soma unidades ao saldo atual e grava os metadados e o movimento na
    mesma transação. Exemplo: saldo 10 + compra 30 = 40. Compra com saldo inicial
    desconhecido pede conferência física; não pressupõe saldo zero.
-4. **Ver compras** lista quantidade, data, farmácia e link, com paginação. O
-   histórico é somente para leitura, inclusive para o proprietário.
+4. **Ver compras** lista quantidade, data, farmácia e link, com paginação.
+   **Editar compra** permite corrigir esses campos, informando o motivo. A diferença
+   da quantidade é aplicada ao saldo atual; data/farmácia/link não alteram o saldo.
+   **Ver correções** mostra valores anteriores, corrigidos, motivo e diferença.
+   A auditoria é somente para consulta; nenhuma correção apaga o consumo passado.
 5. **Conferir saldo físico** continua sendo um ajuste explícito, diferente de
    registrar compra. Pode corrigir a contagem sem apagar fatos anteriores.
 
@@ -37,7 +47,10 @@ Retry de uma compra reutiliza o identificador da operação enquanto o formulár
 está aberto. Se o servidor salvou e a resposta se perdeu, tentar novamente não
 soma duas vezes. Uma falha transacional não deixa compra ou movimento parcial.
 Depois de uma falha, confira o histórico antes de fechar e iniciar outra compra.
-Não existem compras inferidas a partir de saldos ou dados antigos.
+Correções também reutilizam identificadores e conferem a revisão da compra, para
+impedir repetir o ajuste ou sobrescrever uma edição concorrente. Uma divergência
+pede recarregar a compra e revisar os dados. A unidade da apresentação é preservada.
+Não existem compras ou correções inferidas a partir de saldos ou dados antigos.
 
 ## Dose e término do estoque
 
@@ -76,7 +89,7 @@ backup privado recente/checksum, branch de recuperação, destino confirmado e
 compara todos os campos anteriores, inclusive comandos, saldos e movimentos.
 Qualquer diferença reverte a transação. Não consulta `public.links`.
 
-161 testes locais aprovados, incluindo preservação/rollback da migração,
+192 testes locais aprovados, incluindo preservação/rollback da migração,
 permissões, dose por item, compras, retry, calendário e unidades. TypeScript,
 lint e build fazem parte da verificação. A API Neon foi exercitada somente em
 branch sintética. Dez cenários de navegador passaram com Auth e dados reais de
@@ -84,6 +97,8 @@ fixtures: ativação, filtros, compras/histórico, perda de resposta com retry, 
 baixa/estorno, navegação, visualizador, isolamento e celular de 320 a 1280 px.
 Zero erros de página; nenhuma escrita de teste foi feita na produção.
 
-A publicação exige revisão desta entrega e aplicação de 004 e 005 antes do
-frontend. O teste autenticado das contas reais vem depois da implantação aprovada.
+A edição de compras depende da migração 006 antes do novo frontend. A etapa 006
+preserva os dados existentes, acrescentando revisão e auditoria de correções. O teste autenticado das contas reais vem depois da implantação aprovada.
 Android permanece como última etapa.
+
+Detalhes da correção, preservação e implantação: [CORRECAO_COMPRAS.md](CORRECAO_COMPRAS.md).

@@ -18,7 +18,7 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "test:catalog": "node --experimental-strip-types --test tests/medication-catalog.test.mjs tests/dashboard-routines.test.mjs",
-    "test:medication-control": "node --experimental-strip-types --test tests/medication-control.test.mjs tests/medication-control-upgrade.test.mjs tests/stock-forecast.test.mjs"
+    "test:medication-control": "node --experimental-strip-types --test tests/medication-control.test.mjs tests/medication-control-upgrade.test.mjs tests/stock-forecast.test.mjs tests/medication-details.test.mjs tests/purchase-corrections.test.mjs tests/purchase-corrections-upgrade.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

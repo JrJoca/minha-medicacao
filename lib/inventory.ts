@@ -30,8 +30,10 @@ export type MedicationPurchase = {
   purchased_on: string;
   pharmacy: string;
   reference_url: string | null;
+  revision?: string;
 };
 export type PurchaseDraft = { quantity: string; purchased_on: string; pharmacy: string; reference_url: string };
+export type PurchaseCorrectionDraft = PurchaseDraft & {reason: string};
 export function localDay(date: Date) {
   return String(date.getFullYear()) + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
 }
@@ -52,4 +54,17 @@ export function parsePurchase(draft: PurchaseDraft, today: string) {
     reference_url = url.href;
   }
   return {quantity, purchased_on: draft.purchased_on, pharmacy, reference_url};
+}
+
+export function purchaseDraft(purchase: MedicationPurchase): PurchaseDraft {
+  return {quantity:String(purchase.quantity),purchased_on:purchase.purchased_on,pharmacy:purchase.pharmacy,reference_url:purchase.reference_url || ""};
+}
+export function normalizePurchase(purchase: MedicationPurchase) {
+  return {...purchase,quantity:Number(purchase.quantity),revision:purchase.revision == null ? undefined : String(purchase.revision)};
+}
+export function parsePurchaseCorrection(draft: PurchaseCorrectionDraft, today: string) {
+  const purchase = parsePurchase(draft,today);
+  const reason = draft.reason.trim();
+  if (!reason || Array.from(reason).length > 500) throw new Error("Informe o motivo da correção, com até 500 caracteres.");
+  return {...purchase,reason};
 }

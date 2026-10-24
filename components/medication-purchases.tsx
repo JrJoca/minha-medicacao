@@ -1,23 +1,26 @@
 "use client";
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, ShoppingBag } from "lucide-react";
+import { History, LoaderCircle, Pencil, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getBackend } from "@/lib/neon";
 import type { Medication } from "@/lib/medication-catalog";
-import { localDay, parsePurchase, unitLabel, type Inventory, type MedicationPurchase, type PurchaseDraft } from "@/lib/inventory";
+import { localDay, normalizePurchase, parsePurchase, unitLabel, type Inventory, type MedicationPurchase, type PurchaseDraft } from "@/lib/inventory";
 import { formatStockQuantity } from "@/lib/medication-stock";
+import { PurchaseCorrectionForm } from "@/components/purchase-correction-form";
+import { PurchaseCorrections } from "@/components/purchase-corrections";
 
-export function MedicationPurchases({medicine, stock, mode, canEdit, onClose, onSaved, onConfigureStock}: {
+export function MedicationPurchases({medicine, stock, mode, canEdit, onClose, onSaved, onCorrected, onConfigureStock}: {
   medicine: Medication;
   stock?: Inventory;
   mode: "purchase" | "history";
   canEdit: boolean;
   onClose: () => void;
   onSaved: () => void;
+  onCorrected: () => void;
   onConfigureStock: () => void;
 }) {
   const [draft, setDraft] = useState<PurchaseDraft>({quantity:"", purchased_on:localDay(new Date()), pharmacy:"", reference_url:""});
@@ -26,6 +29,9 @@ export function MedicationPurchases({medicine, stock, mode, canEdit, onClose, on
   const [history, setHistory] = useState<MedicationPurchase[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [editing, setEditing] = useState<MedicationPurchase | null>(null);
+  const [corrections, setCorrections] = useState<MedicationPurchase | null>(null);
+  const [notice, setNotice] = useState("");
   const mounted = useRef(false);
   const busy = useRef(false);
   const command = useRef<{payload:string;id:string} | null>(null);
@@ -45,13 +51,13 @@ export function MedicationPurchases({medicine, stock, mode, canEdit, onClose, on
     setLoading(true);setError("");
     try {
       const {data,error} = await getBackend().from("medication_purchases")
-        .select("id,medication_id,quantity,unit,purchased_on,pharmacy,reference_url")
+        .select("*")
         .eq("medication_id",medicine.id).order("purchased_on",{ascending:false})
         .order("created_at",{ascending:false}).order("id",{ascending:false})
         .range(offset,offset+19).abortSignal(AbortSignal.timeout(20_000));
       if (error || !Array.isArray(data)) throw new Error("purchase-history");
       if (!mounted.current || current !== generation.current) return;
-      const rows = data.map(row=>({...row,quantity:Number(row.quantity)})) as MedicationPurchase[];
+      const rows = data.map(row=>normalizePurchase(row as MedicationPurchase));
       setHistory(previous=>offset ? [...previous,...rows] : rows);
       setHasMore(rows.length === 20);
     } catch {
@@ -92,8 +98,8 @@ export function MedicationPurchases({medicine, stock, mode, canEdit, onClose, on
   return <Dialog open onOpenChange={open=>{if(!open && !busy.current)onClose();}}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl" showCloseButton={!saving}>
       <DialogHeader>
-        <DialogTitle>{mode === "purchase" ? "Registrar compra" : "Compras registradas"} — {medicine.name}</DialogTitle>
-        <DialogDescription>{mode === "purchase" ? "A quantidade comprada será somada ao saldo atual. A previsão será recalculada pelas rotinas ativas." : "Quantidade, data e local de cada compra. Compras e tomadas mantêm seu histórico."}</DialogDescription>
+        <DialogTitle>{mode === "purchase" ? "Registrar compra" : editing ? "Corrigir compra" : corrections ? "Histórico de correções" : "Compras registradas"} — {medicine.name}</DialogTitle>
+        <DialogDescription>{mode === "purchase" ? "A quantidade comprada será somada ao saldo atual. A previsão será recalculada pelas rotinas ativas." : editing ? "Corrija os dados da compra e informe o motivo. A diferença da quantidade será aplicada ao estoque." : "Consulte as compras e o registro das correções, com os valores anteriores preservados."}</DialogDescription>
       </DialogHeader>
       {mode === "purchase" ? !knownBalance ? <div className="grid gap-4">
         <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Confira o saldo físico antes da primeira compra. Se não há unidades disponíveis, informe zero.</p>
@@ -116,7 +122,13 @@ export function MedicationPurchases({medicine, stock, mode, canEdit, onClose, on
           {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}
           <Button type="submit" className="h-11 rounded-xl">{saving ? <LoaderCircle className="animate-spin" /> : <ShoppingBag />}{saving ? "Registrando…" : "Registrar e somar ao estoque"}</Button>
         </fieldset>
-      </form> : <div className="grid gap-3">
+      </form> : editing ? <PurchaseCorrectionForm key={editing.id} purchase={editing} canEdit={canEdit}
+        onBusyChange={value=>{busy.current=value;if(mounted.current)setSaving(value);}} onCancel={()=>setEditing(null)}
+        onSaved={(updated,changed)=>{setHistory(previous=>previous.map(row=>row.id===updated.id?updated:row));setEditing(null);setNotice(changed?"Compra corrigida. Os dados anteriores foram preservados no histórico.":"Os dados da compra já estavam atualizados.");if(changed)onCorrected();void loadHistory(0);}} />
+        : corrections ? <PurchaseCorrections key={corrections.id} purchase={corrections} onBack={()=>setCorrections(null)} />
+        : <div className="grid gap-3">
+        <Button type="button" variant="outline" disabled={loading} onClick={()=>void loadHistory(0)}>Atualizar compras</Button>
+        {notice&&<p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
         {error && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900"><p>{error}</p><Button variant="outline" className="mt-2" disabled={loading} onClick={()=>void loadHistory(history.length)}>Tentar novamente</Button></div>}
         {!history.length && !loading && !error && <p className="p-4 text-sm text-slate-500">Nenhuma compra registrada para este medicamento.</p>}
         {history.map(purchase=><article key={purchase.id} className="rounded-2xl border p-4 text-sm">
@@ -126,6 +138,10 @@ export function MedicationPurchases({medicine, stock, mode, canEdit, onClose, on
           </div>
           <p className="mt-2 break-words">{purchase.pharmacy}</p>
           {purchase.reference_url && <a className="mt-2 block break-all font-medium text-blue-700 underline" href={purchase.reference_url} target="_blank" rel="noreferrer">Abrir link da compra</a>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" variant="outline" disabled={!canEdit||loading||purchase.revision==null} onClick={()=>{setNotice("");setEditing(purchase);}}><Pencil/>Editar compra</Button>
+            <Button type="button" variant="ghost" disabled={loading} onClick={()=>setCorrections(purchase)}><History/>Ver correções</Button>
+          </div>
         </article>)}
         {loading && <p role="status" className="flex gap-2 text-sm text-slate-500"><LoaderCircle className="size-4 animate-spin" />Carregando compras…</p>}
         {hasMore && !error && <Button variant="outline" disabled={loading} onClick={()=>void loadHistory(history.length)}>Carregar mais compras</Button>}
