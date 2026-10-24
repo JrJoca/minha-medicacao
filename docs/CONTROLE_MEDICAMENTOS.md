@@ -41,8 +41,10 @@ Não existem compras inferidas a partir de saldos ou dados antigos.
 
 ## Dose e término do estoque
 
-No cadastro da rotina, cada medicamento tem sua **quantidade por tomada** e
-unidade. Para quetiapina, informar 2 comprimidos é independente da dosagem em mg.
+No cadastro da rotina, selecionar um medicamento já exibe os campos de
+**comprimidos ou ml por tomada**, sem exigir um clique adicional em “+”. Cada item
+tem sua quantidade e unidade; o formulário exige uma quantidade positiva antes
+de salvar. Para quetiapina, informar 2 comprimidos é independente da dosagem em mg.
 A aplicação usa a quantidade declarada, sem prescrever nem inferir a dose.
 
 A previsão soma os medicamentos das rotinas diárias ativas, respeita horários e
