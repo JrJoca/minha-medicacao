@@ -13,6 +13,7 @@ import { normalizeInventory, parseQuantity, unitLabel, type Inventory, type Quan
 import type { Medication as Medicine } from "@/lib/medication-catalog";
 import { forecastStock, formatForecastDate, type ForecastRoutine } from "@/lib/stock-forecast";
 import { MedicationPurchases } from "@/components/medication-purchases";
+import { MedicationEditor } from "@/components/medication-editor";
 const stockFields = [
   {key:"quantity",label:"Quantidade disponível",min:0},
   {key:"quantity_per_package",label:"Quantidade por caixa ou frasco",min:0.001},
@@ -26,7 +27,7 @@ function parseStockDraft(draft:StockDraft) {
   return {values,errors,valid:Object.keys(errors).length===0};
 }
 
-export function MedicationInventory({ medicines, user, dataLoading, revision, catalogError, catalogRecovered, onReloadCatalog, routines, forecastReady, now }: {
+export function MedicationInventory({ medicines, user, dataLoading, revision, catalogError, catalogRecovered, onReloadCatalog, onMedicineUpdated, routines, forecastReady, now }: {
   medicines: Medicine[];
   user: ApplicationUser;
   dataLoading: boolean;
@@ -34,6 +35,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
   catalogError?: string;
   catalogRecovered?: boolean;
   onReloadCatalog?: () => Promise<void>;
+  onMedicineUpdated: (medicine: Medicine) => void;
   routines: ForecastRoutine[];
   forecastReady: boolean;
   now: Date;
@@ -42,6 +44,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
   const [statusBusy, setStatusBusy] = useState(false);
   const statusLock = useRef(false);
   const [purchaseTarget, setPurchaseTarget] = useState<{id:string;mode:"purchase"|"history"}|null>(null);
+  const [editorTarget, setEditorTarget] = useState<Medicine | null>(null);
   const [stocks, setStocks] = useState<Record<string, Inventory>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -217,6 +220,7 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
                     {canEdit ? <Pencil /> : <Package />}{canEdit ? known ? "Conferir saldo físico" : "Configurar estoque" : "Consultar estoque"}
                   </Button>
                   <div className="mt-2 grid gap-2">
+                    <Button type="button" variant="outline" disabled={!canEdit || dataLoading || !!catalogError} onClick={()=>setEditorTarget(medicine)} aria-label={"Editar cadastro de "+medicine.name} className="h-11 rounded-xl"><Pencil />Editar cadastro</Button>
                     <Button type="button" variant="outline" disabled={!canEdit || unavailable || saving || dataLoading || !!catalogError} onClick={()=>setPurchaseTarget({id:medicine.id,mode:"purchase"})} className="h-11 rounded-xl"><ShoppingBag />Registrar compra</Button>
                     <Button type="button" variant="ghost" disabled={dataLoading || !!catalogError} onClick={()=>setPurchaseTarget({id:medicine.id,mode:"history"})} className="h-10 rounded-xl"><History />Ver compras</Button>
                     <Button type="button" variant="ghost" disabled={!canEdit || statusBusy || dataLoading || !!catalogError} onClick={()=>void changeStatus(medicine)} aria-label={(medicine.active ? "Desativar " : "Ativar ")+medicine.name} className="h-10 rounded-xl"><Power />{medicine.active ? "Desativar medicamento" : "Ativar medicamento"}</Button>
@@ -228,9 +232,12 @@ export function MedicationInventory({ medicines, user, dataLoading, revision, ca
         </div>
       )}
       {!!medicines.length && !medicines.some(m=>filter==="all" || (filter==="active" ? m.active : !m.active)) && <p className="rounded-2xl border border-dashed p-5 text-sm text-slate-500">Nenhum medicamento neste filtro.</p>}
+      {editorTarget && <MedicationEditor key={editorTarget.id} medicine={editorTarget} user={user} onClose={()=>setEditorTarget(null)}
+        onSaved={medicine=>{onMedicineUpdated(medicine);setEditorTarget(null);setMessage("Cadastro de "+medicine.name+" atualizado.");}} />}
       {purchaseTarget && medicines.find(m=>m.id===purchaseTarget.id) && <MedicationPurchases key={purchaseTarget.id+purchaseTarget.mode}
         medicine={medicines.find(m=>m.id===purchaseTarget.id)!} stock={stocks[purchaseTarget.id]} mode={purchaseTarget.mode} canEdit={canEdit}
         onClose={()=>setPurchaseTarget(null)} onSaved={()=>{setPurchaseTarget(null);setRefresh(value=>value+1);setMessage("Compra registrada e somada ao estoque.");}}
+        onCorrected={()=>{setRefresh(value=>value+1);setMessage("Correção da compra registrada.");}}
         onConfigureStock={()=>{const medicine=medicines.find(m=>m.id===purchaseTarget.id);setPurchaseTarget(null);if(medicine)openStock(medicine);}} />}
       <Dialog open={!!selected} onOpenChange={open => { if (!open && !saveLock.current) setSelectedId(null); }}>
         <DialogContent showCloseButton={!saving} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto rounded-3xl p-5 sm:max-w-lg sm:p-6">

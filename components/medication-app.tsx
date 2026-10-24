@@ -117,6 +117,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   const [authBusy, setAuthBusy] = useState(false);
   const [authRefresh, setAuthRefresh] = useState(0);
   const authRevision = useRef(0);
+  const currentAuthId = useRef<string | null>(null);
   const [routineOpen, setRoutineOpen] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
   const [medicineOpen, setMedicineOpen] = useState(false);
@@ -355,6 +356,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     const syncIdentity = async (identity: { id: string; email?: string } | null) => {
       if (!active) return;
       const revision = ++authRevision.current;
+      currentAuthId.current = identity?.id ?? null;
       setUser(null);
       intakeCommands.current.clear();
       setRoutineOpen(false);
@@ -2316,7 +2318,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
             note={medicineLoading ? "Carregando medicamentos…" : medicineError ? "Medicamentos indisponíveis" : medicines.length + " medicamentos cadastrados"}
           />
         </section>}
-        <MedicationInventory key={user.authId} medicines={medicines} user={user} dataLoading={medicineLoading} revision={inventoryRevision} catalogError={medicineError} catalogRecovered={catalogRecovered} onReloadCatalog={() => loadData()} routines={routines} forecastReady={!dataLoading && !medicineLoading && !routineLoadError && !routineDetailsError && todayIntakesReady} now={now} />
+        <MedicationInventory key={user.authId} medicines={medicines} user={user} dataLoading={medicineLoading} revision={inventoryRevision} catalogError={medicineError} catalogRecovered={catalogRecovered} onReloadCatalog={() => loadData()} onMedicineUpdated={medicine=>{if(currentAuthId.current!==user.authId)return;setMedicines(previous=>previous.map(item=>item.id===medicine.id ? medicine : item));void loadData();}} routines={routines} forecastReady={!dataLoading && !medicineLoading && !routineLoadError && !routineDetailsError && todayIntakesReady} now={now} />
         {view === "routines" && <>
         <div className="mb-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div>

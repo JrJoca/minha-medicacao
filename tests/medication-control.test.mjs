@@ -96,3 +96,29 @@ test("cliente não pode apagar ou adulterar compras registradas",async()=>{
   await assert.rejects(asUser(1,async()=>{await stock();await purchase();await db.exec(query);}),{code:"42501"});
  }
 });
+
+test("editar cadastro mantém identidade, saldo, compras, doses e snapshots anteriores",()=>asUser(1,async()=>{
+ await stock();await purchase();const r=await routine();
+ await db.query("SELECT public.change_routine_intake($1,$2,'confirm',now(),'America/Sao_Paulo')",[crypto.randomUUID(),r]);
+ const before=(await db.query("SELECT * FROM public.medications WHERE id=$1",[id(11)])).rows[0];
+ const tables=["medication_stock","medication_purchases","routine_medications","stock_movements","medication_intakes"];
+ const snapshots={};
+ for(const table of tables)snapshots[table]=(await db.query("SELECT * FROM public."+table)).rows;
+ const result=await db.query("UPDATE public.medications SET name=$1,dosage=$2,reference_url=$3 WHERE id=$4 AND user_id=$5 RETURNING *",["Nome atualizado","Dosagem atualizada","https://example.invalid/novo",id(11),id(1)]);
+ const after=result.rows[0];assert.equal(after.name,"Nome atualizado");assert.equal(after.dosage,"Dosagem atualizada");
+ for(const key of Object.keys(before).filter(k=>!["name","dosage","reference_url"].includes(k)))assert.deepEqual(after[key],before[key]);
+ for(const table of tables)assert.deepEqual((await db.query("SELECT * FROM public."+table)).rows,snapshots[table]);
+}));
+test("editar medicamento desativado preserva sua situação e unidade",()=>asUser(1,async()=>{
+ await stock(12.5,"ml");await activate(false);
+ const result=await db.query("UPDATE public.medications SET name='Cadastro corrigido' WHERE id=$1 RETURNING is_active",[id(11)]);
+ assert.equal(result.rows[0].is_active,false);assert.equal(Number(await balance()),12.5);
+ assert.equal((await db.query("SELECT unit FROM public.medication_stock WHERE medication_id=$1",[id(11)])).rows[0].unit,"ml");
+}));
+test("visualizador e outro proprietário não editam cadastro alheio; anônimo não tem acesso",async()=>{
+ for(const n of [2,3])await asUser(n,async()=>{
+  const result=await db.query("UPDATE public.medications SET name='Tentativa bloqueada' WHERE id=$1 RETURNING id",[id(11)]);
+  assert.equal(result.rows.length,0);
+ });
+ await assert.rejects(asUser(1,()=>db.query("UPDATE public.medications SET name='Tentativa bloqueada' WHERE id=$1",[id(11)]),"anonymous"),{code:"42501"});
+});

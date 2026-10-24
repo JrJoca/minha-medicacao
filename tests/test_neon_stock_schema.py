@@ -89,5 +89,14 @@ class MedicationControlSchemaTests(StockSchemaTests):
     stockmodule = medication_control
 
 
+spec_corrections = importlib.util.spec_from_file_location("purchase_corrections", Path(__file__).parents[1] / "scripts/neon-purchase-corrections.py")
+purchase_corrections = importlib.util.module_from_spec(spec_corrections)
+spec_corrections.loader.exec_module(purchase_corrections)
+
+
+class PurchaseCorrectionsSchemaTests(StockSchemaTests):
+    stockmodule = purchase_corrections
+
+
 if __name__ == "__main__":
     unittest.main()
