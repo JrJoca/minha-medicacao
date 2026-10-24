@@ -166,7 +166,6 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   const intakeLock=useRef(false);
   const [intakeBusy,setIntakeBusy]=useState(false);
   const intakeCommands=useRef(new Map<string,{id:string;at:string}>());
-  const [medicineToAdd, setMedicineToAdd] = useState("");
   const [noEndDate, setNoEndDate] = useState(false);
   const [notice, setNotice] = useState("");
   const [now, setNow] = useState(() => new Date());
@@ -791,7 +790,6 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     setSelected([]);
     setRoutineDoses({});
     setFrequencyKind("daily");
-    setMedicineToAdd("");
     setNoEndDate(false);
     setRoutineOpen(true);
   }
@@ -802,7 +800,6 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     setSelected([...routine.medicineIds]);
     setRoutineDoses({...routine.doses});
     setFrequencyKind(routine.frequencyKind || "daily");
-    setMedicineToAdd("");
     setNoEndDate(routine.noEndDate);
     setRoutineOpen(true);
   }
@@ -865,13 +862,11 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     } catch {if(revision===authRevision.current) setRoutineError("Conexão interrompida. Tente salvar novamente; a operação será consultada sem criar uma rotina duplicada.");}
     finally {routineSaveLock.current=false;setRoutineSaving(false);}
   }
-  function addSelectedMedicine() {
-    if (viewerMutationBlocked()) return;
-    const id = medicineToAdd;
+  function addSelectedMedicine(id: string) {
+    if (viewerMutationBlocked() || medicineLoading || medicineError) return;
     if (!id || selected.includes(id) || !medicines.find(m=>m.id===id)?.active) return;
     setSelected((list) => [...list, id]);
     setRoutineDoses(current=>({...current,[id]:{quantity:"",unit:"tablet"}}));
-    setMedicineToAdd("");
   }
   function removeSelectedMedicine(id: string) {
     if (viewerMutationBlocked()) return;
@@ -2101,13 +2096,13 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                   <div className="grid gap-2">
                     <Label>Medicamentos</Label>
                     <p className="text-sm text-slate-500">
-                      Escolha um medicamento da lista e clique em “+” para
-                      adicionar.
+                      Selecione um medicamento para informar a quantidade usada
+                      em cada tomada.
                     </p>
                     <div className="mt-1 flex min-w-0 gap-2">
                       <Select
-                        value={medicineToAdd}
-                        onValueChange={setMedicineToAdd}
+                        value=""
+                        onValueChange={addSelectedMedicine}
                       >
                         <SelectTrigger
                           className="h-12 min-w-0 flex-1 rounded-xl"
@@ -2125,16 +2120,6 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                             ))}
                         </SelectContent>
                       </Select>
-                      <Button
-                        type="button"
-                        size="icon"
-                        onClick={addSelectedMedicine}
-                        disabled={!medicineToAdd}
-                        className="size-12 shrink-0 rounded-xl bg-blue-600"
-                        aria-label="Adicionar medicamento à rotina"
-                      >
-                        <Plus className="size-5" />
-                      </Button>
                     </div>
                     {selected.length > 0 && (
                       <div
@@ -2169,7 +2154,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                                 <X className="size-4" />
                               </Button>
                               <div className="grid w-full grid-cols-2 gap-3">
-                                <div className="grid gap-2"><Label htmlFor={`dose-${id}`}>Quantidade por tomada</Label>
+                                <div className="grid gap-2"><Label htmlFor={`dose-${id}`}>{routineDoses[id]?.unit === "ml" ? "ml por tomada" : "Comprimidos por tomada"}</Label>
                                   <Input id={`dose-${id}`} aria-label={`Quantidade por tomada de ${medicine.name}`} type="number" inputMode="decimal" min="0.001" max="999999999.999" step="0.001" required value={routineDoses[id]?.quantity || ""} onChange={e=>setRoutineDoses(current=>({...current,[id]:{...current[id],quantity:e.target.value}}))} placeholder="Ex.: 2 ou 0,5" />
                                 </div>
                                 <div className="grid gap-2"><Label htmlFor={`dose-unit-${id}`}>Unidade</Label>
@@ -2189,6 +2174,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                       </p>
                     )}
                     {!medicineLoading && !medicineError && medicines.length>0 && !medicines.some(m=>m.active) && <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Nenhum medicamento ativo para adicionar. Ative um medicamento no controle de medicamentos.</p>}
+                    {selected.length > 0 && <p className="text-xs leading-5 text-slate-500">Informe quanto você usa de cada medicamento neste horário. Essa quantidade será descontada do estoque ao confirmar a tomada.</p>}
                     {medicines.some(m=>m.active) &&
                       medicines.filter(m=>m.active).every(m=>selected.includes(m.id)) && (
                         <p className="text-sm font-medium text-blue-700">
