@@ -13,6 +13,7 @@ export type RoutineRecord = {
   total_days: number | null;
   current_day: number;
   status: "active" | "paused";
+  reminders_enabled?: boolean;
   stock_tracking_enabled?: boolean;
   frequency_kind?: "daily" | "other" | null;
   recurrence_rule?: RecurrenceRule | null;
