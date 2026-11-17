@@ -213,5 +213,4 @@ BEGIN
   result:=jsonb_build_object('id',i.id,'taken_at',i.taken_at,'stock_managed',i.stock_managed);
   INSERT INTO application_private.stock_commands VALUES(actor,p_command,payload,result);
   RETURN result;
-END; $function$
-
+END; $function$;
