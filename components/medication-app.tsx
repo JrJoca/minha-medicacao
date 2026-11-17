@@ -455,7 +455,6 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
 
   useEffect(() => {
     if (!user) {
-      setNotificationWarning("");
       // Não deixar lembretes do usuário anterior no dispositivo após sair da conta.
       void clearRoutineNotifications().catch(() => {
         console.warn("Não foi possível remover os lembretes antigos deste dispositivo.");
@@ -690,7 +689,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   async function signOut() {
     const { error } = await getBackend().auth.signOut();
     if (error) setNotice("Não foi possível sair. Tente novamente.");
-    else setAuthRefresh((value) => value + 1);
+    else { setNotificationWarning(""); setAuthRefresh((value) => value + 1); }
   }
 
   async function addMedicine(e: FormEvent<HTMLFormElement>) {
