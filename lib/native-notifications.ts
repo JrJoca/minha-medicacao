@@ -50,7 +50,7 @@ export function clearRoutineNotifications(): Promise<void> {
 export function syncRoutineNotifications(routines: NotificationRoutine[]): Promise<NotificationSyncReport | null> {
   if (!Capacitor.isNativePlatform()) return Promise.resolve(null);
 
-  return serialized(async () => {
+  return serialized<NotificationSyncReport>(async () => {
     const permission = await LocalNotifications.checkPermissions();
     const status = permission.display === "granted"
       ? permission
