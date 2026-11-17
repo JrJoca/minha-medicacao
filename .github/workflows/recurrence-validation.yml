@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/agenda-recorrencias-2026-11-16
+      - feat/android-notifications-recurrence-2026-11-17
   pull_request:
     branches:
       - master
@@ -29,6 +30,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Testes de calendário
         run: node --experimental-strip-types --test tests/recurrence.test.mjs
+      - name: Testes de notificações Android
+        run: pnpm test:notifications
       - name: Testes de estoque e regressão
         run: pnpm test:medication-control
       - name: TypeScript
