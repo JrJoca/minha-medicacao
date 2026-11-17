@@ -52,6 +52,17 @@ test("intervalo de três dias usa a data inicial como âncora e agenda instantes
   assert.ok(result.notifications.every(n => !n.schedule.repeats));
 });
 
+test("intervalo de sete dias usa um alarme semanal permanente ancorado no início", () => {
+  const result = planned([routine({
+    frequencyKind: "other",
+    recurrenceRule: { kind: "interval", startDate: "2026-11-16", everyDays: 7 },
+    recurrenceTimezone: "America/Sao_Paulo",
+  })]);
+  assert.equal(result.notifications.length, 2);
+  assert.ok(result.notifications.every(n => n.schedule.repeats));
+  assert.deepEqual(result.notifications.map(n => n.schedule.on.weekday), [2, 2]);
+});
+
 test("início futuro não dispara alarmes antes do início, mesmo com regra contínua", () => {
   const result = planned([routine({
     recurrenceRule: { kind: "weekdays", startDate: "2026-11-23", weekdays: [1] },
