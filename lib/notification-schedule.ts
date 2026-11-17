@@ -241,6 +241,11 @@ export function isMedicationNotification(
   const extra = pending.extra;
   if (!extra || typeof extra !== "object") return false;
   const obj = extra as Record<string, unknown>;
+  // Versões antigas não incluíam "app". Se outro módulo/app já o declarou,
+  // nunca interpretar uma notificação de terceiros como lembrete legado.
+  if (obj.app !== undefined && obj.app !== null && obj.app !== "minha-medicacao") {
+    return false;
+  }
   return obj.app === "minha-medicacao" ||
     (typeof obj.routineId === "string" &&
       (obj.kind === "reminder" || obj.kind === "deadline"));
