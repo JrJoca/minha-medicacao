@@ -53,6 +53,7 @@ import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type A
 import { syncRoutineNotifications } from "@/lib/native-notifications";
 import { parseQuantity, unitLabel, type QuantityUnit, type RoutineDose } from "@/lib/inventory";
 import { dashboardClock } from "@/lib/dashboard-clock";
+import { addCalendarDays, isScheduledOn, validateRecurrence, type RecurrenceRule, type Weekday } from "@/lib/recurrence";
 import { readRoutineCatalog } from "@/lib/routine-catalog";
 import { readMedicationCatalog, type MedicationLinkRead, type Medication as Medicine } from "@/lib/medication-catalog";
 import { MedicationInventory } from "@/components/medication-inventory";
@@ -70,6 +71,8 @@ type Routine = {
   medicineIds: string[];
   doses: Record<string,RoutineDose>;
   frequencyKind: "daily" | "other" | null;
+  recurrenceRule: RecurrenceRule | null;
+  recurrenceTimezone: string | null;
   stockTracking: boolean;
   archivedAt: string | null;
   intakeId: string | null;
@@ -88,6 +91,11 @@ type Routine = {
 
 const initialMedicines: Medicine[] = [];
 const initialRoutines: Routine[] = [];
+
+function scheduledOn(routine: Routine, date: string): boolean {
+  if (!routine.recurrenceRule) return true;
+  try { return isScheduledOn(routine.recurrenceRule, date); } catch { return false; }
+}
 
 // A exportação estática usa documentos HTML. A navegação RSC do Vinext não está
 // disponível neste deploy; navegar pelo documento também mantém o login Neon.
@@ -159,6 +167,11 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   const [selected, setSelected] = useState<string[]>([]);
   const [routineDoses,setRoutineDoses] = useState<Record<string,RoutineDose>>({});
   const [frequencyKind,setFrequencyKind] = useState<"daily"|"other">("daily");
+  const [scheduleEnabled,setScheduleEnabled] = useState(true);
+  const [recurrenceKind,setRecurrenceKind] = useState<"daily"|"weekdays"|"interval">("daily");
+  const [recurrenceStart,setRecurrenceStart] = useState(() => dashboardClock(new Date()).dayKey);
+  const [recurrenceWeekdays,setRecurrenceWeekdays] = useState<Weekday[]>([1,2,3,4,5]);
+  const [recurrenceEveryDays,setRecurrenceEveryDays] = useState(2);
   const [routineSaving,setRoutineSaving] = useState(false);
   const [routineError,setRoutineError] = useState("");
   const routineSaveLock=useRef(false);
@@ -187,7 +200,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
       ),
     [routines],
   );
-  const active = routinesByTime.filter((r) => !r.paused);
+  const active = routinesByTime.filter((r) => !r.paused && scheduledOn(r,clock.dayKey));
   const done = active.filter((r) => r.taken).length;
   const progress = active.length ? Math.round((done / active.length) * 100) : 0;
   const next = active.find(
@@ -196,9 +209,8 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   );
   const medicineNames = (ids: string[]) =>
     ids.map((id) => medicines.find((m) => m.id === id)?.name).filter(Boolean);
-  const reportIsToday = reportDate === localDateKey(new Date());
   const reportRows = routines
-    .filter((routine) => !routine.paused || reportIntakes.some(i=>i.routine_id===routine.id))
+    .filter((routine) => (!routine.paused && scheduledOn(routine,reportDate)) || reportIntakes.some(i=>i.routine_id===routine.id))
     .map((routine) => {
       const intake = reportIntakes.find(
         (item) => item.routine_id === routine.id,
@@ -206,7 +218,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
       return {
         routine,
         intake,
-        status: (intake ? "taken" : reportIsToday ? "pending" : "missed") as "taken" | "pending" | "missed",
+        status: (intake ? "taken" : reportDate >= clock.dayKey ? "pending" : "missed") as "taken" | "pending" | "missed",
       };
     });
   const reportTaken = reportRows.filter((row) => row.status === "taken").length;
@@ -219,18 +231,17 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   const historyRows = dateKeysBetween(historyStart, historyEnd)
     .reverse()
     .flatMap((date) =>
-      routines.filter(r=>!r.archivedAt || historyIntakes.some(i=>i.routine_id===r.id && localDateKey(new Date(i.taken_at))===date)).map((routine) => {
+      routines.filter(r=>(!r.archivedAt && scheduledOn(r,date)) || historyIntakes.some(i=>i.routine_id===r.id && localDateKey(new Date(i.taken_at))===date)).map((routine) => {
         const intake = historyIntakes.find(
           (item) =>
             item.routine_id === routine.id &&
             localDateKey(new Date(item.taken_at)) === date,
         );
-        const isToday = date === localDateKey(new Date());
         return {
           date,
           routine,
           intake,
-          status: (intake ? "taken" : isToday ? "pending" : "missed") as "taken" | "pending" | "missed",
+          status: (intake ? "taken" : date >= clock.dayKey ? "pending" : "missed") as "taken" | "pending" | "missed",
         };
       }),
     );
@@ -309,7 +320,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
         id: r.id, name: r.name, medicineIds: [] as string[],
         doses: {} as Record<string,RoutineDose>, intakeId: null as string | null,
         stockTracking: r.stock_tracking_enabled ?? false,
-        frequencyKind: r.frequency_kind ?? null, archivedAt: r.archived_at ?? null,
+        frequencyKind: r.frequency_kind ?? null, recurrenceRule: r.recurrence_rule ?? null, recurrenceTimezone: r.recurrence_timezone ?? null, archivedAt: r.archived_at ?? null,
         time: String(r.scheduled_time).slice(0, 5),
         limit: String(r.deadline_time).slice(0, 5),
         period: r.period_description, durationValue: r.duration_value,
@@ -792,6 +803,11 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     setSelected([]);
     setRoutineDoses({});
     setFrequencyKind("daily");
+    setScheduleEnabled(true);
+    setRecurrenceKind("daily");
+    setRecurrenceStart(dashboardClock(new Date()).dayKey);
+    setRecurrenceWeekdays([1,2,3,4,5]);
+    setRecurrenceEveryDays(2);
     setNoEndDate(false);
     setRoutineOpen(true);
   }
@@ -802,6 +818,11 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     setSelected([...routine.medicineIds]);
     setRoutineDoses({...routine.doses});
     setFrequencyKind(routine.frequencyKind || "daily");
+    setScheduleEnabled(!!routine.recurrenceRule);
+    setRecurrenceKind(routine.recurrenceRule?.kind ?? "daily");
+    setRecurrenceStart(routine.recurrenceRule?.startDate || dashboardClock(new Date()).dayKey);
+    setRecurrenceWeekdays(routine.recurrenceRule?.kind==="weekdays" ? routine.recurrenceRule.weekdays : [1,2,3,4,5]);
+    setRecurrenceEveryDays(routine.recurrenceRule?.kind==="interval" ? routine.recurrenceRule.everyDays : 2);
     setNoEndDate(routine.noEndDate);
     setRoutineOpen(true);
   }
@@ -820,6 +841,24 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
       : durationUnit === "weeks"
         ? Number(durationValue) * 7
         : Number(durationValue);
+    let recurrenceRule: RecurrenceRule | null = null;
+    try {
+      if (scheduleEnabled) {
+        if (!noEndDate && (!Number.isSafeInteger(totalDays) || totalDays! <= 0)) {
+          throw new RangeError("Informe a duração em dias ou semanas.");
+        }
+        const endDate = noEndDate ? null : addCalendarDays(recurrenceStart, totalDays! - 1);
+        recurrenceRule = recurrenceKind==="weekdays"
+          ? {kind:"weekdays",startDate:recurrenceStart,endDate,weekdays:[...recurrenceWeekdays]}
+          : recurrenceKind==="interval"
+          ? {kind:"interval",startDate:recurrenceStart,endDate,everyDays:recurrenceEveryDays}
+          : {kind:"daily",startDate:recurrenceStart,endDate};
+        validateRecurrence(recurrenceRule);
+      }
+    } catch (error) {
+      setRoutineError(error instanceof Error ? error.message : "Verifique o calendário da rotina.");
+      return;
+    }
     const payload = {
       user_id: user.id,
       name,
@@ -850,10 +889,17 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     } catch(error) {setRoutineError(error instanceof Error ? error.message : "Confira as quantidades.");return;}
     routineSaveLock.current=true;setRoutineSaving(true);
     const revision=authRevision.current;
-    const intent=JSON.stringify({routine:editingRoutine?.id,...payload,frequencyKind,doses});
+    const timezone = editingRoutine?.recurrenceTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo";
+    const rpcDefinition={...payload,frequency_kind:scheduleEnabled && recurrenceKind!=="daily" ? "other" : frequencyKind,
+      ...(scheduleEnabled ? {recurrence_rule:recurrenceRule,recurrence_timezone:timezone}: {})};
+    const intent=JSON.stringify({routine:editingRoutine?.id,...rpcDefinition,doses});
     if(routineSaveCommand.current?.payload!==intent) routineSaveCommand.current={payload:intent,id:crypto.randomUUID()};
     try {
-      const {error}=await getBackend().rpc("save_routine_with_doses",{p_routine_id:editingRoutine?.id || null,p_definition:{...payload,frequency_kind:frequencyKind,command_id:routineSaveCommand.current.id},p_doses:doses});
+      if (scheduleEnabled) {
+        const {error:schemaError} = await getBackend().from("medication_routines").select("recurrence_rule").limit(1);
+        if (schemaError) {setRoutineError("Agenda ainda não disponível neste ambiente. A migração do calendário deve ser aplicada antes de cadastrar recorrências.");return;}
+      }
+      const {error}=await getBackend().rpc("save_routine_with_doses",{p_routine_id:editingRoutine?.id || null,p_definition:{...rpcDefinition,command_id:routineSaveCommand.current.id},p_doses:doses});
       if (revision!==authRevision.current) return;
       if (error) {setRoutineError("Erro ao salvar rotina: "+error.message);return;}
       routineSaveCommand.current=null;
@@ -2198,10 +2244,32 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                       value={editingRoutine?.limit || "09:00"}
                     />
                   </div>
-                  <div className="grid gap-2"><Label htmlFor="frequency-kind">Repetição para a previsão de estoque</Label>
-                    <select id="frequency-kind" className="h-11 w-full min-w-0 max-w-full rounded-xl border bg-white px-3" value={frequencyKind} onChange={e=>setFrequencyKind(e.target.value as "daily"|"other")}><option value="daily">Diária: uma tomada neste horário</option><option value="other">Outra frequência (sem previsão)</option></select>
-                    <p className="text-xs leading-5 text-slate-500">Para tomar em vários horários, crie uma rotina para cada horário. As quantidades das rotinas diárias ativas serão somadas.</p>
-                  </div>
+                  <label className="flex items-start gap-3 rounded-xl border p-3">
+                    <Checkbox checked={scheduleEnabled} disabled={!!editingRoutine?.recurrenceRule} onCheckedChange={value=>setScheduleEnabled(value===true)} />
+                    <span className="text-sm"><strong className="block">Agenda estruturada de medicação</strong>
+                    <span className="text-slate-500">Defina os dias de tomada. Rotinas antigas só são convertidas após marcar esta opção.</span></span>
+                  </label>
+                  {scheduleEnabled ? <div className="grid gap-3 rounded-xl border bg-slate-50 p-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="grid gap-1 text-sm font-semibold">Repetição
+                        <select className="h-11 rounded-lg border bg-white px-3" value={recurrenceKind} onChange={e=>setRecurrenceKind(e.target.value as "daily"|"weekdays"|"interval")}>
+                          <option value="daily">Todos os dias</option><option value="weekdays">Dias da semana</option><option value="interval">A cada N dias</option>
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-sm font-semibold">Início do tratamento
+                        <input type="date" className="h-11 rounded-lg border bg-white px-3" value={recurrenceStart} onChange={e=>setRecurrenceStart(e.target.value)} required />
+                      </label>
+                    </div>
+                    {recurrenceKind==="weekdays" && <fieldset className="grid gap-2"><legend className="text-sm font-semibold">Dias programados</legend>
+                      <div className="flex flex-wrap gap-2">{(["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"] as const).map((label,i)=><label key={label} className="flex items-center gap-1 rounded-lg border bg-white px-2 py-2 text-xs"><input type="checkbox" checked={recurrenceWeekdays.includes(i as Weekday)} onChange={e=>setRecurrenceWeekdays(old=>e.target.checked?[...old,i as Weekday]:old.filter(d=>d!==i))} />{label}</label>)}</div>
+                    </fieldset>}
+                    {recurrenceKind==="interval" && <label className="grid gap-1 text-sm font-semibold">Repetir a cada quantos dias?
+                      <input type="number" min={1} max={3650} step={1} className="h-11 rounded-lg border bg-white px-3" value={recurrenceEveryDays} onChange={e=>setRecurrenceEveryDays(Number(e.target.value))} required />
+                    </label>}
+                    <p className="text-xs text-slate-600">Para horários diferentes, crie uma rotina por horário. As datas seguem o fuso horário configurado para a rotina.</p>
+                  </div> : <div className="grid gap-2"><Label htmlFor="frequency-kind">Repetição legada (sem calendário)</Label>
+                    <select id="frequency-kind" className="h-11 w-full rounded-xl border bg-white px-3" value={frequencyKind} onChange={e=>setFrequencyKind(e.target.value as "daily"|"other")}><option value="daily">Diária</option><option value="other">Outra frequência (sem previsão)</option></select>
+                  </div>}
                   <Field id="period" label="Orientação de frequência" placeholder="Ex.: Conforme orientação médica" value={editingRoutine?.period || "Todos os dias"} />
                   <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
                     <Checkbox
@@ -2378,6 +2446,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-xl font-extrabold">{r.name}</h3>
                       {r.paused && <Badge text="PAUSADA" />}
+                      {!r.paused && !scheduledOn(r,clock.dayKey) && !r.taken && <Badge text="SEM TOMADA HOJE" />}
                       {r.taken && !r.paused && <Badge text="CONCLUÍDA" green />}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -2413,7 +2482,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                     {!r.paused && (
                       <Button
                         onClick={() => toggleTaken(r.id)}
-                        disabled={isViewer || intakeBusy || medicineLoading || !!medicineError || dataLoading || !!routineLoadError || !!routineDetailsError || !todayIntakesReady}
+                        disabled={isViewer || intakeBusy || medicineLoading || !!medicineError || dataLoading || !!routineLoadError || !!routineDetailsError || !todayIntakesReady || (!r.taken && !scheduledOn(r,clock.dayKey))}
                         variant={r.taken ? "outline" : "default"}
                         className={
                           "h-11 w-full rounded-xl sm:w-auto " +
@@ -2468,7 +2537,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                     </DropdownMenu>
                   </div>
                 </div>
-                {!r.paused && !r.taken && (
+                {!r.paused && !r.taken && scheduledOn(r,clock.dayKey) && (
                   <div className="border-t bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700 sm:px-6">
                     Lembrete às {r.time} e alerta final às {r.limit}
                   </div>

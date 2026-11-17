@@ -1,0 +1,39 @@
+name: Validar recorrências e regressão de medicação
+
+on:
+  push:
+    branches:
+      - feat/agenda-recorrencias-2026-11-16
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Testes, lint, tipos e build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: pnpm
+      - name: Instalação com lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Testes de calendário
+        run: node --experimental-strip-types --test tests/recurrence.test.mjs
+      - name: Testes de estoque e regressão
+        run: pnpm test:medication-control
+      - name: TypeScript
+        run: pnpm exec tsc --noEmit
+      - name: Lint
+        run: pnpm lint
+      - name: Build
+        run: pnpm build

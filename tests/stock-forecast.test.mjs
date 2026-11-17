@@ -49,3 +49,48 @@ test("compra valida vírgula, data local, farmácia e link opcional",()=>{
 test("compra não aceita data inexistente/futura, vazio, link executável ou credenciais",()=>{
  for(const change of [{quantity:""},{quantity:"0"},{purchased_on:"2026-02-30"},{purchased_on:"2026-10-23"},{pharmacy:" "},{reference_url:"javascript:alert(1)"},{reference_url:"https://user:secret@example.invalid/"}])assert.throws(()=>parsePurchase({...draft,...change},"2026-10-22"));
 });
+
+
+test("duas tomadas semanais consomem apenas nos dias programados", () => {
+ const routine=r({
+   frequencyKind:"other",
+   recurrenceRule:{kind:"weekdays",startDate:"2026-10-22",endDate:null,weekdays:[2,4]},
+   recurrenceTimezone:"America/Sao_Paulo"
+ });
+ const projection=f(4,[routine]);
+ assert.equal(projection.dailyQuantity,null);
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-10-27T11:00:00Z').getTime());
+ assert.equal(projection.firstUncovered.getTime(),new Date('2026-10-29T11:00:00Z').getTime());
+});
+
+test("intervalo de três dias usa as datas civis sem consumo nos dias intermediários", () => {
+ const routine=r({
+   frequencyKind:"other",
+   recurrenceRule:{kind:"interval",startDate:"2026-10-22",endDate:null,everyDays:3},
+   recurrenceTimezone:"America/Sao_Paulo"
+ });
+ const projection=f(10,[routine]);
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-11-03T11:00:00Z').getTime());
+ assert.equal(projection.firstUncovered.getTime(),new Date('2026-11-06T11:00:00Z').getTime());
+});
+
+test("tratamento limitado estruturado não prevê consumo após término", () => {
+ const routine=r({
+   recurrenceRule:{kind:"daily",startDate:"2026-10-22",endDate:"2026-10-24"},
+   recurrenceTimezone:"America/Sao_Paulo"
+ });
+ const projection=f(10,[routine]);
+ assert.equal(projection.state,"covered");
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-10-24T11:00:00Z').getTime());
+ assert.equal(projection.firstUncovered,null);
+});
+
+test("rotina estruturada iniciada amanhã não consome hoje", () => {
+ const routine=r({
+   recurrenceRule:{kind:"daily",startDate:"2026-10-23",endDate:"2026-10-24"},
+   recurrenceTimezone:"America/Sao_Paulo"
+ });
+ const projection=f(2,[routine]);
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-10-23T11:00:00Z').getTime());
+ assert.equal(projection.firstUncovered.getTime(),new Date('2026-10-24T11:00:00Z').getTime());
+});
