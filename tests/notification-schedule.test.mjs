@@ -249,8 +249,10 @@ test("pausar uma rotina não cancela alarmes de outras rotinas nem de outros rec
   const changes = reconcileMedicationNotifications(pending, after.notifications);
   const oldPausedIds = planned([paused]).notifications.map(x=>x.id);
   assert.deepEqual(changes.obsolete.map(x=>x.id).sort(), oldPausedIds.sort());
-  assert.equal(changes.kept, after.notifications.length);
-  assert.equal(changes.next.length, 0);
+  // O limite da fila redistribui vagas liberadas pela pausa para eventos
+  // futuros da rotina que continua ativa. Eles devem ser agendados agora.
+  assert.equal(changes.kept + changes.next.length, after.notifications.length);
+  assert.ok(changes.next.every(n => n.extra.routineId === "healthy-schedule"));
 });
 
 test("arquivamento e desativação de lembretes retiram eventos anteriores da fila", () => {
