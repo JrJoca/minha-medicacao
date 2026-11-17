@@ -129,3 +129,89 @@ END; $$;
 
 -- IMPORTANTE: os grants da função existente são preservados por CREATE OR REPLACE.
 -- Não acrescentar acesso irrestrito às novas colunas ou às funções internas.
+
+-- Função pura para validar elegibilidade civil também no servidor.
+CREATE FUNCTION application_private.recurrence_scheduled_on(p_rule jsonb,p_date date)
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE SECURITY INVOKER
+SET search_path=pg_catalog,application_private AS $agenda$
+DECLARE begin_date date;
+  final_date date;
+  kind text;
+BEGIN
+  IF p_rule IS NULL OR p_date IS NULL THEN RETURN false; END IF;
+  kind:=p_rule->>'kind';
+  begin_date:=(p_rule->>'startDate')::date;
+  IF p_date<begin_date THEN RETURN false; END IF;
+  IF p_rule->>'endDate' IS NOT NULL THEN
+    final_date:=(p_rule->>'endDate')::date;
+    IF p_date>final_date THEN RETURN false; END IF;
+  END IF;
+  IF kind='daily' THEN RETURN true; END IF;
+  IF kind='weekdays' THEN
+    RETURN EXISTS (SELECT 1 FROM jsonb_array_elements_text(p_rule->'weekdays') AS w(value)
+      WHERE w.value::integer=extract(dow from p_date)::integer);
+  END IF;
+  IF kind='interval' THEN
+    RETURN ((p_date-begin_date) % (p_rule->>'everyDays')::integer)=0;
+  END IF;
+  RETURN false;
+END;
+$agenda$;
+REVOKE ALL ON FUNCTION application_private.recurrence_scheduled_on(jsonb,date) FROM PUBLIC,anonymous,authenticated;
+
+-- A confirmação e a correção consultam a regra sob o JWT e locks já existentes.
+CREATE OR REPLACE FUNCTION public.change_routine_intake(p_command uuid, p_routine_id uuid, p_action text, p_taken_at timestamp with time zone, p_timezone text, p_intake_id uuid DEFAULT NULL::uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'public', 'application_private'
+AS $function$
+DECLARE actor uuid:=application_private.stock_owner(); payload jsonb; cached application_private.stock_commands; i public.medication_intakes; result jsonb; r public.medication_routines;
+BEGIN
+  IF p_command IS NULL OR p_taken_at IS NULL OR NOT isfinite(p_taken_at) OR p_timezone IS NULL OR NOT EXISTS(SELECT FROM pg_timezone_names WHERE name=p_timezone) OR p_action IS NULL OR p_action NOT IN ('confirm','undo','correct') THEN RAISE EXCEPTION 'Operação inválida.'; END IF;
+  payload:=jsonb_build_object('routine',p_routine_id,'action',p_action,'taken_at',p_taken_at,'timezone',p_timezone,'intake',p_intake_id);
+  PERFORM pg_advisory_xact_lock(hashtextextended(actor::text||p_command::text,0));
+  SELECT * INTO cached FROM application_private.stock_commands WHERE user_id=actor AND command_id=p_command;
+  IF FOUND THEN
+    IF cached.payload<>payload THEN RAISE EXCEPTION 'Identificador já utilizado em outra operação.'; END IF;
+    RETURN cached.result;
+  END IF;
+  SELECT * INTO r FROM public.medication_routines WHERE id=p_routine_id AND user_id=actor FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Rotina indisponível.' USING ERRCODE='42501'; END IF;
+
+  -- Somente novas rotinas com calendário explícito são verificadas por agenda.
+  -- Legados mantêm a semântica anterior até que o usuário configure a repetição.
+  IF p_action IN ('confirm','correct') AND r.recurrence_rule IS NOT NULL THEN
+    IF p_timezone IS DISTINCT FROM r.recurrence_timezone THEN
+      RAISE EXCEPTION 'Fuso horário diferente do calendário da rotina.';
+    END IF;
+    IF p_action='confirm' AND (r.status <> 'active' OR r.archived_at IS NOT NULL) THEN
+      RAISE EXCEPTION 'Rotina pausada ou arquivada.';
+    END IF;
+    IF (p_taken_at AT TIME ZONE p_timezone)::date > (now() AT TIME ZONE p_timezone)::date THEN
+      RAISE EXCEPTION 'Não é possível confirmar tomada futura.';
+    END IF;
+    IF NOT application_private.recurrence_scheduled_on(
+      r.recurrence_rule,(p_taken_at AT TIME ZONE p_timezone)::date
+    ) THEN
+      RAISE EXCEPTION 'Não há tomada programada nesta data.';
+    END IF;
+  END IF;
+  IF p_action='confirm' THEN
+    IF NOT r.stock_tracking_enabled THEN RAISE EXCEPTION 'Configure as quantidades da rotina antes de confirmar.'; END IF;
+    SELECT * INTO i FROM public.medication_intakes WHERE routine_id=p_routine_id AND (taken_at AT TIME ZONE p_timezone)::date=(p_taken_at AT TIME ZONE p_timezone)::date ORDER BY taken_at LIMIT 1;
+    IF NOT FOUND THEN INSERT INTO public.medication_intakes(user_id,routine_id,taken_at,occurrence_timezone) VALUES(actor,p_routine_id,p_taken_at,p_timezone) RETURNING * INTO i; END IF;
+  ELSE
+    SELECT * INTO i FROM public.medication_intakes WHERE id=p_intake_id AND routine_id=p_routine_id AND user_id=actor FOR UPDATE;
+    IF p_action='undo' THEN DELETE FROM public.medication_intakes WHERE id=i.id;
+    ELSE
+      IF i.id IS NULL THEN RAISE EXCEPTION 'Tomada não encontrada.'; END IF;
+      IF EXISTS(SELECT FROM public.medication_intakes x WHERE x.routine_id=p_routine_id AND x.id<>i.id AND (x.taken_at AT TIME ZONE p_timezone)::date=(p_taken_at AT TIME ZONE p_timezone)::date) THEN RAISE EXCEPTION 'Já existe uma tomada nesta data.'; END IF;
+      UPDATE public.medication_intakes SET taken_at=p_taken_at WHERE id=i.id RETURNING * INTO i;
+    END IF;
+  END IF;
+  result:=jsonb_build_object('id',i.id,'taken_at',i.taken_at,'stock_managed',i.stock_managed);
+  INSERT INTO application_private.stock_commands VALUES(actor,p_command,payload,result);
+  RETURN result;
+END; $function$
+
