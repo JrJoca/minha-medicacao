@@ -137,3 +137,57 @@ export function treatmentEnded(rule: RecurrenceRule, onDate: string): boolean {
   validateRecurrence(rule);
   return !!rule.endDate && dayNumber(onDate) > dayNumber(rule.endDate);
 }
+
+
+/** Aritmética por datas civis, sem somar 24h ao relógio do dispositivo. */
+export function addCalendarDays(dateKey: string, days: number): string {
+  if (!Number.isSafeInteger(days) || Math.abs(days) > 365 * 100) {
+    throw new RangeError("Intervalo de dias inválido.");
+  }
+  const key = dateKeyFromDay(dayNumber(dateKey) + days);
+  dayNumber(key);
+  return key;
+}
+
+export function calendarDaysBetween(startDate: string, endDate: string): number {
+  return dayNumber(endDate) - dayNumber(startDate);
+}
+
+/** Interpreta um instante na zona IANA da rotina (sem depender da zona do dispositivo). */
+export function dateKeyInTimezone(instant: Date, timezone: string): string {
+  if (!(instant instanceof Date) || !Number.isFinite(instant.getTime())) {
+    throw new RangeError("Instante inválido.");
+  }
+  const fields = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const find = (kind: string) => fields.find(part => part.type === kind)?.value;
+  const key = [find("year"),find("month"),find("day")].join("-");
+  dayNumber(key);
+  return key;
+}
+
+/** Converte uma hora civil de uma zona IANA em um Date real; rejeita horas inexistentes no DST. */
+export function dateTimeInTimezone(day: string, time: string, timezone: string): Date | null {
+  const date = dayNumber(day);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
+  const [hour, minute] = time.split(":").map(Number);
+  const expectedMs = date * MS_PER_DAY + hour * 3_600_000 + minute * 60_000;
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone, year:"numeric", month:"2-digit", day:"2-digit",
+    hour:"2-digit", minute:"2-digit", hourCycle:"h23",
+  });
+  let guess = expectedMs;
+  for (let pass=0;pass<5;pass++) {
+    const parts=formatter.formatToParts(new Date(guess));
+    const field=(kind:string) => Number(parts.find(p=>p.type===kind)?.value);
+    const observed = Date.UTC(field("year"),field("month")-1,field("day"),field("hour"),field("minute"));
+    const difference = expectedMs-observed;
+    if (difference===0) return new Date(guess);
+    guess+=difference;
+  }
+  return null;
+}
