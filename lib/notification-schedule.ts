@@ -155,10 +155,15 @@ export function buildNotificationPlan(
         rule.startDate <= today &&
         timezone === deviceTimezone &&
         (rule.kind === "daily" || rule.kind === "weekdays" ||
-          (rule.kind === "interval" && rule.everyDays === 1));
+          (rule.kind === "interval" && (rule.everyDays === 1 || rule.everyDays === 7)));
 
       if (nativeRepeat) {
-        const weekdays = rule.kind === "weekdays" ? [...rule.weekdays].sort() : [null];
+        // A cada sete dias equivale a uma repetição semanal ancorada no
+        // dia de início. Não fazer essa conversão para 14, 21 ou 30 dias.
+        const weekdays = rule.kind === "weekdays" ? [...rule.weekdays].sort()
+          : rule.kind === "interval" && rule.everyDays === 7
+            ? [new Date(rule.startDate + "T00:00:00Z").getUTCDay()]
+            : [null];
         for (const weekday of weekdays) {
           for (const part of kinds) {
             // Calendário: 0=Dom; Capacitor: 1=Dom ... 7=Sáb.
