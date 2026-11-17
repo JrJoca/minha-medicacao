@@ -21,6 +21,7 @@ export type NotificationSyncReport = {
   exact: boolean;
   truncated: boolean;
   skipped: number;
+  scheduled: number;
 };
 
 async function pendingMedicationNotifications() {
@@ -37,7 +38,18 @@ async function clearPending() {
 /** Cancela apenas lembretes desta aplicação, inclusive os da versão anterior. */
 export function clearRoutineNotifications(): Promise<void> {
   if (!Capacitor.isNativePlatform()) return Promise.resolve();
-  return serialized(clearPending);
+  return serialized(async () => {
+    await clearPending();
+    // Na saída de conta, também limpar da bandeja as notificações antigas
+    // que ainda exibem o nome da rotina. Não remover mensagens de outros apps.
+    const delivered = await LocalNotifications.getDeliveredNotifications();
+    const ids = delivered.notifications
+      .filter(item => isMedicationNotification({
+        extra: item.extra ?? item.data,
+      }))
+      .map(item => item.id);
+    if (ids.length) await LocalNotifications.removeDeliveredNotificationsById({ ids });
+  });
 }
 
 /**
@@ -60,7 +72,7 @@ export function syncRoutineNotifications(routines: NotificationRoutine[]): Promi
     // quando a permissão estiver negada evita disparos com agenda antiga.
     if (status.display !== "granted") {
       await clearPending();
-      return { permission: "denied", exact: false, truncated: false, skipped: 0 };
+      return { permission: "denied", exact: false, truncated: false, skipped: 0, scheduled: 0 };
     }
 
     const plan = buildNotificationPlan(routines);
@@ -123,6 +135,7 @@ export function syncRoutineNotifications(routines: NotificationRoutine[]): Promi
       exact: isExactNotification,
       truncated: plan.truncated,
       skipped: plan.skipped,
+      scheduled: plan.notifications.length,
     };
   });
 }
