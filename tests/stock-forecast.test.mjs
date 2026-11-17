@@ -59,8 +59,8 @@ test("duas tomadas semanais consomem apenas nos dias programados", () => {
  });
  const projection=f(4,[routine]);
  assert.equal(projection.dailyQuantity,null);
- assert.equal(projection.lastCovered.getTime(),date(27,8));
- assert.equal(projection.firstUncovered.getTime(),date(29,8));
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-10-27T11:00:00Z').getTime());
+ assert.equal(projection.firstUncovered.getTime(),new Date('2026-10-29T11:00:00Z').getTime());
 });
 
 test("intervalo de três dias usa as datas civis sem consumo nos dias intermediários", () => {
@@ -70,8 +70,8 @@ test("intervalo de três dias usa as datas civis sem consumo nos dias intermedi�
    recurrenceTimezone:"America/Sao_Paulo"
  });
  const projection=f(10,[routine]);
- assert.equal(projection.lastCovered.getTime(),new Date(2026,10,3,8).getTime());
- assert.equal(projection.firstUncovered.getTime(),new Date(2026,10,6,8).getTime());
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-11-03T11:00:00Z').getTime());
+ assert.equal(projection.firstUncovered.getTime(),new Date('2026-11-06T11:00:00Z').getTime());
 });
 
 test("tratamento limitado estruturado não prevê consumo após término", () => {
@@ -81,7 +81,7 @@ test("tratamento limitado estruturado não prevê consumo após término", () =>
  });
  const projection=f(10,[routine]);
  assert.equal(projection.state,"covered");
- assert.equal(projection.lastCovered.getTime(),date(24,8));
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-10-24T11:00:00Z').getTime());
  assert.equal(projection.firstUncovered,null);
 });
 
@@ -91,6 +91,6 @@ test("rotina estruturada iniciada amanhã não consome hoje", () => {
    recurrenceTimezone:"America/Sao_Paulo"
  });
  const projection=f(2,[routine]);
- assert.equal(projection.lastCovered.getTime(),date(23,8));
- assert.equal(projection.firstUncovered.getTime(),date(24,8));
+ assert.equal(projection.lastCovered.getTime(),new Date('2026-10-23T11:00:00Z').getTime());
+ assert.equal(projection.firstUncovered.getTime(),new Date('2026-10-24T11:00:00Z').getTime());
 });
