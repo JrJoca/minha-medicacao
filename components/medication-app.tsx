@@ -50,7 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
-import { syncRoutineNotifications } from "@/lib/native-notifications";
+import { clearRoutineNotifications, syncRoutineNotifications } from "@/lib/native-notifications";
 import { parseQuantity, unitLabel, type QuantityUnit, type RoutineDose } from "@/lib/inventory";
 import { dashboardClock } from "@/lib/dashboard-clock";
 import { addCalendarDays, isScheduledOn, validateRecurrence, type RecurrenceRule, type Weekday } from "@/lib/recurrence";
@@ -182,6 +182,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   const intakeCommands=useRef(new Map<string,{id:string;at:string}>());
   const [noEndDate, setNoEndDate] = useState(false);
   const [notice, setNotice] = useState("");
+  const [notificationWarning, setNotificationWarning] = useState("");
   const [now, setNow] = useState(() => new Date());
   const clock = dashboardClock(now);
   const currentTimeInMinutes = clock.minutes;
@@ -453,11 +454,52 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   );
 
   useEffect(() => {
-    if (!user || dataLoading || routineLoadError || routineDetailsError) return;
-    void syncRoutineNotifications(routines).catch((error: unknown) => {
-      console.error("Não foi possível sincronizar as notificações", error);
-    });
-  }, [user, dataLoading, routineLoadError, routineDetailsError, routines]);
+    if (!user) {
+      // Não deixar lembretes do usuário anterior no dispositivo após sair da conta.
+      void clearRoutineNotifications().catch(() => {
+        console.warn("Não foi possível remover os lembretes antigos deste dispositivo.");
+      });
+      return;
+    }
+    if (dataLoading || routineLoading || routineLoadError || routineDetailsError) return;
+
+    let disposed = false;
+    const refresh = () => {
+      void syncRoutineNotifications(routines).then(report => {
+        if (disposed || !report) return;
+        const warnings: string[] = [];
+        if (report.permission === "denied") {
+          warnings.push("Notificações bloqueadas: autorize os alertas nas configurações do Android.");
+        } else {
+          if (!report.exact && report.scheduled > 0) {
+            warnings.push("Alarmes exatos desativados: lembretes podem atrasar.");
+          }
+          if (report.truncated) {
+            warnings.push("Há mais lembretes que a fila permite. Abra o aplicativo regularmente para renovar as próximas datas.");
+          }
+          if (report.skipped) {
+            warnings.push("Algumas rotinas têm frequência incompleta e não receberão lembretes.");
+          }
+        }
+        setNotificationWarning(warnings.join(" "));
+      }).catch(() => {
+        if (!disposed) setNotificationWarning("Não foi possível atualizar os lembretes. Reabra o aplicativo para tentar novamente.");
+      });
+    };
+    // Reabastecer agendas de intervalo a cada retorno ao aplicativo, sem
+    // depender de timers JS executando enquanto o Android o mantém fechado.
+    refresh();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [user, dataLoading, routineLoading, routineLoadError, routineDetailsError, routines]);
 
   async function loadReport(dateKey: string) {
     const revision = authRevision.current;
@@ -647,7 +689,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   async function signOut() {
     const { error } = await getBackend().auth.signOut();
     if (error) setNotice("Não foi possível sair. Tente novamente.");
-    else setAuthRefresh((value) => value + 1);
+    else { setNotificationWarning(""); setAuthRefresh((value) => value + 1); }
   }
 
   async function addMedicine(e: FormEvent<HTMLFormElement>) {
@@ -2554,6 +2596,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
         </section>
         </>}
         {view === "medicines" && (routineLoadError || routineDetailsError) && <p role="alert" className="mt-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{routineLoadError || routineDetailsError} <Link href="/" prefetch={false} onNavigate={event=>{event.preventDefault();navigateStaticPage("/");}} className="underline">Consultar rotinas</Link></p>}
+        {notificationWarning && <p role="status" className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">{notificationWarning}</p>}
         {notice && <output className="mt-6 flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
           <BellRing className="size-4" />
           {notice}
