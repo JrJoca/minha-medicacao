@@ -287,7 +287,7 @@ function StockForecast({medicationId,stock,routines,ready,now}: {medicationId:st
   const forecast = forecastStock(medicationId,stock?.quantity ?? null,stock?.unit ?? null,routines,now);
   const reason = forecast.state === "missing_balance" ? "Informe o saldo físico para calcular."
     : forecast.state === "no_routines" ? "Nenhuma rotina ativa utiliza este medicamento."
-    : forecast.state === "missing_doses" ? "Configure quantidades e frequência diária em todas as rotinas ativas deste medicamento."
+    : forecast.state === "missing_doses" ? "Configure as quantidades e o calendário das rotinas ativas deste medicamento."
     : forecast.state === "out_of_range" ? "A quantidade excede o período de calendário que pode ser exibido."
     : forecast.state === "covered" ? "O saldo cobre o período configurado das rotinas ativas." : "";
   return <div className="mt-auto rounded-xl bg-slate-50 p-3">
@@ -297,7 +297,7 @@ function StockForecast({medicationId,stock,routines,ready,now}: {medicationId:st
       {forecast.lastCovered && forecast.state === "forecast" && <p className="mt-1 text-xs text-slate-500">Última tomada totalmente coberta</p>}
       {forecast.firstUncovered && <p className="mt-2 text-sm font-semibold text-amber-800">Repor até {formatForecastDate(forecast.firstUncovered)}</p>}
       {reason && <p className="mt-1 text-xs leading-5 text-slate-500">{reason}</p>}
-      {forecast.state === "forecast" && <p className="mt-2 text-xs leading-5 text-slate-500">{formatStockQuantity(forecast.dailyQuantity)} {unitLabel(stock?.unit)} por dia · {formatStockDuration(stock?.estimated_days)} de consumo. Considera as doses ainda pendentes de hoje e os dias restantes do tratamento. A previsão muda com as rotinas e o saldo.</p>}
+      {forecast.state === "forecast" && <p className="mt-2 text-xs leading-5 text-slate-500">{forecast.dailyQuantity === null ? "Consumo por calendário variável" : `${formatStockQuantity(forecast.dailyQuantity)} ${unitLabel(stock?.unit)} por dia`} · Considera as ocorrências agendadas ainda pendentes, o saldo e o encerramento das rotinas. A previsão muda com os registros e as compras.</p>}
     </>}
   </div>;
 }
