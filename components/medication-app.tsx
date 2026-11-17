@@ -471,7 +471,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
         if (report.permission === "denied") {
           warnings.push("Notificações bloqueadas: autorize os alertas nas configurações do Android.");
         } else {
-          if (!report.exact && routines.some(r => !r.paused && !r.archivedAt)) {
+          if (!report.exact && report.scheduled > 0) {
             warnings.push("Alarmes exatos desativados: lembretes podem atrasar.");
           }
           if (report.truncated) {
