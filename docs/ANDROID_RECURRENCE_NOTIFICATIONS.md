@@ -17,8 +17,9 @@ automaticamente. O comportamento deve ser verificado em dispositivo físico.
   agendador nativo do sistema.
 - **Dias da semana** contínuos no mesmo fuso: usa uma repetição nativa por dia
   selecionado (Capacitor usa domingo=1; o domínio usa domingo=0).
-- **Intervalo de N dias**, para N maior que 1: usa os instantes futuros calculados
-  desde `startDate`, nunca ciclos de "a cada N×24h" que driftam em DST.
+- **Intervalo de 7 dias** contínuo no mesmo fuso: repete semanalmente no
+  dia de início; para intervalos N>1 diferentes de 7 usa instantes futuros
+  calculados desde `startDate`, sem ciclos N×24h sujeitos a DST.
 - Tratamentos com `endDate` e tratamentos cujo início ainda não chegou são
   agendados com datas absolutas, sem eventos antes do início ou depois do fim.
 - Se o fuso da rotina difere do dispositivo, datas absolutas mantêm o fuso da
@@ -38,7 +39,7 @@ automaticamente. O comportamento deve ser verificado em dispositivo físico.
    sincronização; limite total de 60 notificações pendentes (inclui lembrete
    e horário-limite, e as repetições nativas). Quando existem mais eventos, o
    planejador mantém os primeiros e indica truncamento. O Android não executa
-   JavaScript enquanto o aplicativo permanece fechado; intervalos >1 dia
+   JavaScript enquanto o aplicativo permanece fechado; intervalos >1 dia (exceto a cada 7 dias contínuos no mesmo fuso)
    precisam que o app seja aberto periodicamente para renovar a agenda.
    **Não prometa recorrência indefinida sem reabertura para N>1.**
 2. A atualização de uma rotina feita em outro aparelho só cancela alarmes antigos
