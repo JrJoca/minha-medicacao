@@ -8,13 +8,20 @@ import {
 
 // Operações de login, logout e retomada podem chegar quase simultaneamente.
 // Serializar evita que uma sincronização antiga recrie alarmes após logout.
-let syncQueue: Promise<void> = Promise.resolve();
+let syncQueue: Promise<unknown> = Promise.resolve();
 
-function serialized(work: () => Promise<void>): Promise<void> {
+function serialized<T>(work: () => Promise<T>): Promise<T> {
   const operation = syncQueue.then(work, work);
-  syncQueue = operation.catch(() => {});
+  syncQueue = operation.then(() => undefined, () => undefined);
   return operation;
 }
+
+export type NotificationSyncReport = {
+  permission: "granted" | "denied";
+  exact: boolean;
+  truncated: boolean;
+  skipped: number;
+};
 
 async function pendingMedicationNotifications() {
   const pending = await LocalNotifications.getPending();
@@ -40,8 +47,8 @@ export function clearRoutineNotifications(): Promise<void> {
  * A agenda individual é renovada quando o usuário abre/retoma a aplicação.
  * Sem permissão de alarmes exatos, o Android pode apresentar atrasos.
  */
-export function syncRoutineNotifications(routines: NotificationRoutine[]): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return Promise.resolve();
+export function syncRoutineNotifications(routines: NotificationRoutine[]): Promise<NotificationSyncReport | null> {
+  if (!Capacitor.isNativePlatform()) return Promise.resolve(null);
 
   return serialized(async () => {
     const permission = await LocalNotifications.checkPermissions();
@@ -53,7 +60,7 @@ export function syncRoutineNotifications(routines: NotificationRoutine[]): Promi
     // quando a permissão estiver negada evita disparos com agenda antiga.
     if (status.display !== "granted") {
       await clearPending();
-      return;
+      return { permission: "denied", exact: false, truncated: false, skipped: 0 };
     }
 
     const plan = buildNotificationPlan(routines);
@@ -81,7 +88,6 @@ export function syncRoutineNotifications(routines: NotificationRoutine[]): Promi
     // Cancelamento ANTES dos novos disparos: não dispara nas datas antigas.
     if (obsolete.length) await LocalNotifications.cancel({ notifications: obsolete });
     const next = plan.notifications.filter(notification => !kept.has(notification.id));
-    if (!next.length) return;
 
     // Em Android 12+, falta de permissão exata usa alarme inexato de maneira
     // explícita, sem navegar à configuração do sistema em cada retomada.
@@ -103,7 +109,8 @@ export function syncRoutineNotifications(routines: NotificationRoutine[]): Promi
         ...notification,
         isExactNotification,
       }));
-      await LocalNotifications.schedule({ notifications: batch });
+      const result = await LocalNotifications.schedule({ notifications: batch });
+      if (result.warning) isExactNotification = false;
     }
     if (plan.truncated) {
       console.warn("Agenda de notificações atingiu o limite; abra o aplicativo regularmente para renovar.");
@@ -111,5 +118,11 @@ export function syncRoutineNotifications(routines: NotificationRoutine[]): Promi
     if (plan.skipped) {
       console.warn("Algumas rotinas não possuem calendário de notificação válido.");
     }
+    return {
+      permission: "granted",
+      exact: isExactNotification,
+      truncated: plan.truncated,
+      skipped: plan.skipped,
+    };
   });
 }
