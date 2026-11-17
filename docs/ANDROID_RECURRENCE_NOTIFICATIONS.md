@@ -74,8 +74,8 @@ automaticamente. O comportamento deve ser verificado em dispositivo físico.
 - APK compilado, instalação e testes manuais em dispositivo físico.
 - Reabastecimento autônomo em segundo plano para intervalos longos sem
   abertura do app (requer estratégia nativa Android/WorkManager/AlarmManager).
-- Mensagem visual para avisar sobre fila truncada e ausência de permissão
-  de alarme exato, em vez de apenas registrar aviso técnico.
+- Revisar UX e acessibilidade dos avisos visíveis sobre fila truncada,
+  permissão negada e alarmes inexatos, implementados no app.
 - Verificar re-sincronização após reinicialização do aparelho e restrições do
   fabricante.
 
