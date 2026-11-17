@@ -209,7 +209,6 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   );
   const medicineNames = (ids: string[]) =>
     ids.map((id) => medicines.find((m) => m.id === id)?.name).filter(Boolean);
-  const reportIsToday = reportDate === localDateKey(new Date());
   const reportRows = routines
     .filter((routine) => (!routine.paused && scheduledOn(routine,reportDate)) || reportIntakes.some(i=>i.routine_id===routine.id))
     .map((routine) => {
@@ -238,7 +237,6 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
             item.routine_id === routine.id &&
             localDateKey(new Date(item.taken_at)) === date,
         );
-        const isToday = date === localDateKey(new Date());
         return {
           date,
           routine,
