@@ -1,4 +1,5 @@
 import type { CatalogRead } from "./medication-catalog";
+import type { RecurrenceRule } from "./recurrence";
 
 export type RoutineRecord = {
   id: string;
@@ -14,6 +15,8 @@ export type RoutineRecord = {
   status: "active" | "paused";
   stock_tracking_enabled?: boolean;
   frequency_kind?: "daily" | "other" | null;
+  recurrence_rule?: RecurrenceRule | null;
+  recurrence_timezone?: string | null;
   archived_at?: string | null;
 };
 
