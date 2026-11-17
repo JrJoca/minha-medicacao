@@ -843,6 +843,24 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
       : durationUnit === "weeks"
         ? Number(durationValue) * 7
         : Number(durationValue);
+    let recurrenceRule: RecurrenceRule | null = null;
+    try {
+      if (scheduleEnabled) {
+        if (!noEndDate && (!Number.isSafeInteger(totalDays) || totalDays! <= 0)) {
+          throw new RangeError("Informe a duração em dias ou semanas.");
+        }
+        const endDate = noEndDate ? null : addCalendarDays(recurrenceStart, totalDays! - 1);
+        recurrenceRule = recurrenceKind==="weekdays"
+          ? {kind:"weekdays",startDate:recurrenceStart,endDate,weekdays:[...recurrenceWeekdays]}
+          : recurrenceKind==="interval"
+          ? {kind:"interval",startDate:recurrenceStart,endDate,everyDays:recurrenceEveryDays}
+          : {kind:"daily",startDate:recurrenceStart,endDate};
+        validateRecurrence(recurrenceRule);
+      }
+    } catch (error) {
+      setRoutineError(error instanceof Error ? error.message : "Verifique o calendário da rotina.");
+      return;
+    }
     const payload = {
       user_id: user.id,
       name,
@@ -873,10 +891,17 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     } catch(error) {setRoutineError(error instanceof Error ? error.message : "Confira as quantidades.");return;}
     routineSaveLock.current=true;setRoutineSaving(true);
     const revision=authRevision.current;
-    const intent=JSON.stringify({routine:editingRoutine?.id,...payload,frequencyKind,doses});
+    const timezone = editingRoutine?.recurrenceTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo";
+    const rpcDefinition={...payload,frequency_kind:scheduleEnabled && recurrenceKind!=="daily" ? "other" : frequencyKind,
+      ...(scheduleEnabled ? {recurrence_rule:recurrenceRule,recurrence_timezone:timezone}: {})};
+    const intent=JSON.stringify({routine:editingRoutine?.id,...rpcDefinition,doses});
     if(routineSaveCommand.current?.payload!==intent) routineSaveCommand.current={payload:intent,id:crypto.randomUUID()};
     try {
-      const {error}=await getBackend().rpc("save_routine_with_doses",{p_routine_id:editingRoutine?.id || null,p_definition:{...payload,frequency_kind:frequencyKind,command_id:routineSaveCommand.current.id},p_doses:doses});
+      if (scheduleEnabled) {
+        const {error:schemaError} = await getBackend().from("medication_routines").select("recurrence_rule").limit(1);
+        if (schemaError) {setRoutineError("Agenda ainda não disponível neste ambiente. A migração do calendário deve ser aplicada antes de cadastrar recorrências.");return;}
+      }
+      const {error}=await getBackend().rpc("save_routine_with_doses",{p_routine_id:editingRoutine?.id || null,p_definition:{...rpcDefinition,command_id:routineSaveCommand.current.id},p_doses:doses});
       if (revision!==authRevision.current) return;
       if (error) {setRoutineError("Erro ao salvar rotina: "+error.message);return;}
       routineSaveCommand.current=null;
