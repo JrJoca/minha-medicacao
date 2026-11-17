@@ -53,6 +53,7 @@ import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type A
 import { syncRoutineNotifications } from "@/lib/native-notifications";
 import { parseQuantity, unitLabel, type QuantityUnit, type RoutineDose } from "@/lib/inventory";
 import { dashboardClock } from "@/lib/dashboard-clock";
+import { addCalendarDays, isScheduledOn, validateRecurrence, type RecurrenceRule, type Weekday } from "@/lib/recurrence";
 import { readRoutineCatalog } from "@/lib/routine-catalog";
 import { readMedicationCatalog, type MedicationLinkRead, type Medication as Medicine } from "@/lib/medication-catalog";
 import { MedicationInventory } from "@/components/medication-inventory";
@@ -70,6 +71,8 @@ type Routine = {
   medicineIds: string[];
   doses: Record<string,RoutineDose>;
   frequencyKind: "daily" | "other" | null;
+  recurrenceRule: RecurrenceRule | null;
+  recurrenceTimezone: string | null;
   stockTracking: boolean;
   archivedAt: string | null;
   intakeId: string | null;
@@ -88,6 +91,11 @@ type Routine = {
 
 const initialMedicines: Medicine[] = [];
 const initialRoutines: Routine[] = [];
+
+function scheduledOn(routine: Routine, date: string): boolean {
+  if (!routine.recurrenceRule) return true;
+  try { return isScheduledOn(routine.recurrenceRule, date); } catch { return false; }
+}
 
 // A exportação estática usa documentos HTML. A navegação RSC do Vinext não está
 // disponível neste deploy; navegar pelo documento também mantém o login Neon.
@@ -159,6 +167,11 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   const [selected, setSelected] = useState<string[]>([]);
   const [routineDoses,setRoutineDoses] = useState<Record<string,RoutineDose>>({});
   const [frequencyKind,setFrequencyKind] = useState<"daily"|"other">("daily");
+  const [scheduleEnabled,setScheduleEnabled] = useState(true);
+  const [recurrenceKind,setRecurrenceKind] = useState<"daily"|"weekdays"|"interval">("daily");
+  const [recurrenceStart,setRecurrenceStart] = useState(() => dashboardClock(new Date()).dayKey);
+  const [recurrenceWeekdays,setRecurrenceWeekdays] = useState<Weekday[]>([1,2,3,4,5]);
+  const [recurrenceEveryDays,setRecurrenceEveryDays] = useState(2);
   const [routineSaving,setRoutineSaving] = useState(false);
   const [routineError,setRoutineError] = useState("");
   const routineSaveLock=useRef(false);
@@ -187,7 +200,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
       ),
     [routines],
   );
-  const active = routinesByTime.filter((r) => !r.paused);
+  const active = routinesByTime.filter((r) => !r.paused && scheduledOn(r,clock.dayKey));
   const done = active.filter((r) => r.taken).length;
   const progress = active.length ? Math.round((done / active.length) * 100) : 0;
   const next = active.find(
@@ -198,7 +211,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     ids.map((id) => medicines.find((m) => m.id === id)?.name).filter(Boolean);
   const reportIsToday = reportDate === localDateKey(new Date());
   const reportRows = routines
-    .filter((routine) => !routine.paused || reportIntakes.some(i=>i.routine_id===routine.id))
+    .filter((routine) => (!routine.paused && scheduledOn(routine,reportDate)) || reportIntakes.some(i=>i.routine_id===routine.id))
     .map((routine) => {
       const intake = reportIntakes.find(
         (item) => item.routine_id === routine.id,
@@ -206,7 +219,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
       return {
         routine,
         intake,
-        status: (intake ? "taken" : reportIsToday ? "pending" : "missed") as "taken" | "pending" | "missed",
+        status: (intake ? "taken" : reportDate >= clock.dayKey ? "pending" : "missed") as "taken" | "pending" | "missed",
       };
     });
   const reportTaken = reportRows.filter((row) => row.status === "taken").length;
@@ -219,7 +232,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   const historyRows = dateKeysBetween(historyStart, historyEnd)
     .reverse()
     .flatMap((date) =>
-      routines.filter(r=>!r.archivedAt || historyIntakes.some(i=>i.routine_id===r.id && localDateKey(new Date(i.taken_at))===date)).map((routine) => {
+      routines.filter(r=>(!r.archivedAt && scheduledOn(r,date)) || historyIntakes.some(i=>i.routine_id===r.id && localDateKey(new Date(i.taken_at))===date)).map((routine) => {
         const intake = historyIntakes.find(
           (item) =>
             item.routine_id === routine.id &&
@@ -230,7 +243,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
           date,
           routine,
           intake,
-          status: (intake ? "taken" : isToday ? "pending" : "missed") as "taken" | "pending" | "missed",
+          status: (intake ? "taken" : date >= clock.dayKey ? "pending" : "missed") as "taken" | "pending" | "missed",
         };
       }),
     );
@@ -309,7 +322,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
         id: r.id, name: r.name, medicineIds: [] as string[],
         doses: {} as Record<string,RoutineDose>, intakeId: null as string | null,
         stockTracking: r.stock_tracking_enabled ?? false,
-        frequencyKind: r.frequency_kind ?? null, archivedAt: r.archived_at ?? null,
+        frequencyKind: r.frequency_kind ?? null, recurrenceRule: r.recurrence_rule ?? null, recurrenceTimezone: r.recurrence_timezone ?? null, archivedAt: r.archived_at ?? null,
         time: String(r.scheduled_time).slice(0, 5),
         limit: String(r.deadline_time).slice(0, 5),
         period: r.period_description, durationValue: r.duration_value,
@@ -792,6 +805,11 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     setSelected([]);
     setRoutineDoses({});
     setFrequencyKind("daily");
+    setScheduleEnabled(true);
+    setRecurrenceKind("daily");
+    setRecurrenceStart(dashboardClock(new Date()).dayKey);
+    setRecurrenceWeekdays([1,2,3,4,5]);
+    setRecurrenceEveryDays(2);
     setNoEndDate(false);
     setRoutineOpen(true);
   }
@@ -802,6 +820,11 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     setSelected([...routine.medicineIds]);
     setRoutineDoses({...routine.doses});
     setFrequencyKind(routine.frequencyKind || "daily");
+    setScheduleEnabled(!!routine.recurrenceRule);
+    setRecurrenceKind(routine.recurrenceRule?.kind ?? "daily");
+    setRecurrenceStart(routine.recurrenceRule?.startDate || dashboardClock(new Date()).dayKey);
+    setRecurrenceWeekdays(routine.recurrenceRule?.kind==="weekdays" ? routine.recurrenceRule.weekdays : [1,2,3,4,5]);
+    setRecurrenceEveryDays(routine.recurrenceRule?.kind==="interval" ? routine.recurrenceRule.everyDays : 2);
     setNoEndDate(routine.noEndDate);
     setRoutineOpen(true);
   }
@@ -2361,7 +2384,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
               </CardContent>
             </Card>
           )}
-          {routinesByTime.map((r) => (
+          {routinesByTime.filter(r=>scheduledOn(r,clock.dayKey) || r.taken).map((r) => (
             <Card
               key={r.id}
               className={
@@ -2413,7 +2436,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                     {!r.paused && (
                       <Button
                         onClick={() => toggleTaken(r.id)}
-                        disabled={isViewer || intakeBusy || medicineLoading || !!medicineError || dataLoading || !!routineLoadError || !!routineDetailsError || !todayIntakesReady}
+                        disabled={isViewer || intakeBusy || medicineLoading || !!medicineError || dataLoading || !!routineLoadError || !!routineDetailsError || !todayIntakesReady || (!r.taken && !scheduledOn(r,clock.dayKey))}
                         variant={r.taken ? "outline" : "default"}
                         className={
                           "h-11 w-full rounded-xl sm:w-auto " +
