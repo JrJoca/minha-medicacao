@@ -2246,10 +2246,32 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                       value={editingRoutine?.limit || "09:00"}
                     />
                   </div>
-                  <div className="grid gap-2"><Label htmlFor="frequency-kind">Repetição para a previsão de estoque</Label>
-                    <select id="frequency-kind" className="h-11 w-full min-w-0 max-w-full rounded-xl border bg-white px-3" value={frequencyKind} onChange={e=>setFrequencyKind(e.target.value as "daily"|"other")}><option value="daily">Diária: uma tomada neste horário</option><option value="other">Outra frequência (sem previsão)</option></select>
-                    <p className="text-xs leading-5 text-slate-500">Para tomar em vários horários, crie uma rotina para cada horário. As quantidades das rotinas diárias ativas serão somadas.</p>
-                  </div>
+                  <label className="flex items-start gap-3 rounded-xl border p-3">
+                    <Checkbox checked={scheduleEnabled} disabled={!!editingRoutine?.recurrenceRule} onCheckedChange={value=>setScheduleEnabled(value===true)} />
+                    <span className="text-sm"><strong className="block">Agenda estruturada de medicação</strong>
+                    <span className="text-slate-500">Defina os dias de tomada. Rotinas antigas só são convertidas após marcar esta opção.</span></span>
+                  </label>
+                  {scheduleEnabled ? <div className="grid gap-3 rounded-xl border bg-slate-50 p-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="grid gap-1 text-sm font-semibold">Repetição
+                        <select className="h-11 rounded-lg border bg-white px-3" value={recurrenceKind} onChange={e=>setRecurrenceKind(e.target.value as "daily"|"weekdays"|"interval")}>
+                          <option value="daily">Todos os dias</option><option value="weekdays">Dias da semana</option><option value="interval">A cada N dias</option>
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-sm font-semibold">Início do tratamento
+                        <input type="date" className="h-11 rounded-lg border bg-white px-3" value={recurrenceStart} onChange={e=>setRecurrenceStart(e.target.value)} required />
+                      </label>
+                    </div>
+                    {recurrenceKind==="weekdays" && <fieldset className="grid gap-2"><legend className="text-sm font-semibold">Dias programados</legend>
+                      <div className="flex flex-wrap gap-2">{(["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"] as const).map((label,i)=><label key={label} className="flex items-center gap-1 rounded-lg border bg-white px-2 py-2 text-xs"><input type="checkbox" checked={recurrenceWeekdays.includes(i as Weekday)} onChange={e=>setRecurrenceWeekdays(old=>e.target.checked?[...old,i as Weekday]:old.filter(d=>d!==i))} />{label}</label>)}</div>
+                    </fieldset>}
+                    {recurrenceKind==="interval" && <label className="grid gap-1 text-sm font-semibold">Repetir a cada quantos dias?
+                      <input type="number" min={1} max={3650} step={1} className="h-11 rounded-lg border bg-white px-3" value={recurrenceEveryDays} onChange={e=>setRecurrenceEveryDays(Number(e.target.value))} required />
+                    </label>}
+                    <p className="text-xs text-slate-600">Para horários diferentes, crie uma rotina por horário. As datas seguem o fuso horário configurado para a rotina.</p>
+                  </div> : <div className="grid gap-2"><Label htmlFor="frequency-kind">Repetição legada (sem calendário)</Label>
+                    <select id="frequency-kind" className="h-11 w-full rounded-xl border bg-white px-3" value={frequencyKind} onChange={e=>setFrequencyKind(e.target.value as "daily"|"other")}><option value="daily">Diária</option><option value="other">Outra frequência (sem previsão)</option></select>
+                  </div>}
                   <Field id="period" label="Orientação de frequência" placeholder="Ex.: Conforme orientação médica" value={editingRoutine?.period || "Todos os dias"} />
                   <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
                     <Checkbox
