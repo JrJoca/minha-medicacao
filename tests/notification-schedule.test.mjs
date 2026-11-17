@@ -159,7 +159,9 @@ test("limite de agendamentos preserva os próximos eventos e sinaliza truncament
 });
 
 test("não cancela notificações de outros recursos e identifica notificações antigas do app", () => {
-  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", version: 2 } }), true);
+  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", version: 2 } }), false);
+  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", routineId: "r1", kind: "reminder", version: 2 } }), true);
+  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", category: "other-feature" } }), false);
   assert.equal(isMedicationNotification({ extra: { routineId: "r1", kind: "deadline" } }), true);
   assert.equal(isMedicationNotification({ extra: { other: true } }), false);
   assert.equal(isMedicationNotification({ extra: null }), false);
