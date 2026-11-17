@@ -2429,7 +2429,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
               </CardContent>
             </Card>
           )}
-          {routinesByTime.filter(r=>scheduledOn(r,clock.dayKey) || r.taken).map((r) => (
+          {routinesByTime.map((r) => (
             <Card
               key={r.id}
               className={
@@ -2446,6 +2446,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-xl font-extrabold">{r.name}</h3>
                       {r.paused && <Badge text="PAUSADA" />}
+                      {!r.paused && !scheduledOn(r,clock.dayKey) && !r.taken && <Badge text="SEM TOMADA HOJE" />}
                       {r.taken && !r.paused && <Badge text="CONCLUÍDA" green />}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -2536,7 +2537,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
                     </DropdownMenu>
                   </div>
                 </div>
-                {!r.paused && !r.taken && (
+                {!r.paused && !r.taken && scheduledOn(r,clock.dayKey) && (
                   <div className="border-t bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700 sm:px-6">
                     Lembrete às {r.time} e alerta final às {r.limit}
                   </div>
