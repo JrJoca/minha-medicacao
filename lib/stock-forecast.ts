@@ -1,5 +1,5 @@
 import type { QuantityUnit, RoutineDose } from "./inventory";
-import { dateKeyInTimezone, dateTimeInTimezone, addCalendarDays, isScheduledOn, validateRecurrence, type RecurrenceRule } from "./recurrence";
+import { dateKeyInTimezone, dateTimeInTimezone, addCalendarDays, isScheduledOn, validateRecurrence, type RecurrenceRule } from "./recurrence.ts";
 
 export type ForecastRoutine = {
   recurrenceRule?: RecurrenceRule | null;
