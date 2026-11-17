@@ -50,7 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
-import { syncRoutineNotifications } from "@/lib/native-notifications";
+import { clearRoutineNotifications, syncRoutineNotifications } from "@/lib/native-notifications";
 import { parseQuantity, unitLabel, type QuantityUnit, type RoutineDose } from "@/lib/inventory";
 import { dashboardClock } from "@/lib/dashboard-clock";
 import { addCalendarDays, isScheduledOn, validateRecurrence, type RecurrenceRule, type Weekday } from "@/lib/recurrence";
@@ -453,11 +453,33 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
   );
 
   useEffect(() => {
-    if (!user || dataLoading || routineLoadError || routineDetailsError) return;
-    void syncRoutineNotifications(routines).catch((error: unknown) => {
-      console.error("Não foi possível sincronizar as notificações", error);
-    });
-  }, [user, dataLoading, routineLoadError, routineDetailsError, routines]);
+    if (!user) {
+      // Não deixar lembretes do usuário anterior no dispositivo após sair da conta.
+      void clearRoutineNotifications().catch(() => {
+        console.warn("Não foi possível remover os lembretes antigos deste dispositivo.");
+      });
+      return;
+    }
+    if (dataLoading || routineLoading || routineLoadError || routineDetailsError) return;
+
+    const refresh = () => {
+      void syncRoutineNotifications(routines).catch(() => {
+        console.warn("Não foi possível atualizar os lembretes. Reabra a aplicação para tentar novamente.");
+      });
+    };
+    // Reabastecer agendas de intervalo a cada retorno ao aplicativo, sem
+    // depender de timers JS executando enquanto o Android o mantém fechado.
+    refresh();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [user, dataLoading, routineLoading, routineLoadError, routineDetailsError, routines]);
 
   async function loadReport(dateKey: string) {
     const revision = authRevision.current;
