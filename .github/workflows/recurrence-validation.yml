@@ -98,3 +98,48 @@ jobs:
             minha-medicacao-pr9-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
+
+  apk-release:
+    name: Disponibilizar APK debug (pré-release)
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 9 &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: apk-debug
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # Sem checkout e sem executar dependências de projeto neste job com
+      # permissão de publicação; apenas baixar o artefato do job isolado.
+      - name: Recuperar APK gerado
+        uses: actions/download-artifact@v4
+        with:
+          name: minha-medicacao-pr9-android-debug
+          path: release-files
+      - name: Verificar hash do APK
+        run: |
+          set -euo pipefail
+          cd release-files
+          sha256sum -c minha-medicacao-pr9-debug.apk.sha256
+          test -s minha-medicacao-pr9-debug.apk
+      - name: Criar pré-release com download direto
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          tag="android-pr9-debug-${SOURCE_SHA:0:12}"
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$tag" release-files/minha-medicacao-pr9-debug.apk release-files/minha-medicacao-pr9-debug.apk.sha256 --clobber --repo "$GH_REPO"
+          else
+            gh release create "$tag" release-files/minha-medicacao-pr9-debug.apk release-files/minha-medicacao-pr9-debug.apk.sha256 \
+              --repo "$GH_REPO" \
+              --target "$SOURCE_SHA" \
+              --title "Minha Medicação — Android PR #9 (APK debug de teste)" \
+              --prerelease \
+              --notes "APK de teste compilado automaticamente a partir do PR #9. Assinado com chave debug do CI; não é uma publicação na Play Store. Requer validação de notificações no aparelho e pode não atualizar instalações assinadas com outra chave. SHA-256 acompanha o arquivo."
+          fi
+          gh release view "$tag" --repo "$GH_REPO" --json tagName,assets,url
