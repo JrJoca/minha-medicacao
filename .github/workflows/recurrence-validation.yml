@@ -80,7 +80,7 @@ jobs:
       - name: Gerar APK de testes
         run: |
           cd android
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          bash ./gradlew --no-daemon --stacktrace assembleDebug
       - name: Conferir APK produzido
         run: |
           set -euo pipefail
