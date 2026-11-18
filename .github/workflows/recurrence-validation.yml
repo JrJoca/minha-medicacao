@@ -42,3 +42,59 @@ jobs:
         run: pnpm build
       - name: Sincronização nativa Android
         run: pnpm exec cap sync android
+
+  apk-debug:
+    name: Gerar APK Android de testes
+    # Build isolado do PR #9. Nunca assina com chave de release nem publica
+    # automaticamente na Play Store ou no ambiente web.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 9
+    needs: verificar
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/app/*.gradle*
+            android/gradle/wrapper/gradle-wrapper.properties
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+      - name: Compilar frontend e sincronizar Android
+        run: pnpm android:sync
+      - name: Gerar APK de testes
+        run: |
+          cd android
+          ./gradlew --no-daemon --stacktrace assembleDebug
+      - name: Conferir APK produzido
+        run: |
+          set -euo pipefail
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          file android/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum android/app/build/outputs/apk/debug/app-debug.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk minha-medicacao-pr9-debug.apk
+          sha256sum minha-medicacao-pr9-debug.apk > minha-medicacao-pr9-debug.apk.sha256
+      - name: Publicar APK para download (ZIP do GitHub Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: minha-medicacao-pr9-android-debug
+          path: |
+            minha-medicacao-pr9-debug.apk
+            minha-medicacao-pr9-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
