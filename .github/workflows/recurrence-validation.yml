@@ -42,3 +42,121 @@ jobs:
         run: pnpm build
       - name: Sincronização nativa Android
         run: pnpm exec cap sync android
+
+  apk-debug:
+    name: Gerar APK Android de testes
+    # Build isolado do PR #9. Nunca assina com chave de release nem publica
+    # automaticamente na Play Store ou no ambiente web.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 9
+    needs: verificar
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # URLs de cliente PÚBLICAS; sem tokens ou credenciais administrativas.
+    # Não são herdadas do build Vercel: GitHub Actions compila o APK separadamente.
+    env:
+      VITE_NEON_AUTH_URL: https://ep-late-water-b53akznr.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth
+      VITE_NEON_DATA_API_URL: https://ep-late-water-b53akznr.apirest.c-7.us-east-2.aws.neon.tech/neondb/rest/v1
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/app/*.gradle*
+            android/gradle/wrapper/gradle-wrapper.properties
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+      - name: Compilar frontend e sincronizar Android
+        run: pnpm android:sync
+      - name: Validar endpoints públicos incorporados no APK
+        run: |
+          set -euo pipefail
+          assets=android/app/src/main/assets/public
+          test -d "$assets"
+          grep -R -F -q -- "$VITE_NEON_AUTH_URL" "$assets" || {
+            echo "::error::Neon Auth não foi incorporado ao aplicativo Android."; exit 1;
+          }
+          grep -R -F -q -- "$VITE_NEON_DATA_API_URL" "$assets" || {
+            echo "::error::Neon Data API não foi incorporado ao aplicativo Android."; exit 1;
+          }
+          echo "Endpoints públicos do Neon incorporados ao build Android."
+      - name: Gerar APK de testes
+        run: |
+          cd android
+          bash ./gradlew --no-daemon --stacktrace assembleDebug
+      - name: Conferir APK produzido
+        run: |
+          set -euo pipefail
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          file android/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum android/app/build/outputs/apk/debug/app-debug.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk minha-medicacao-pr9-debug.apk
+          sha256sum minha-medicacao-pr9-debug.apk > minha-medicacao-pr9-debug.apk.sha256
+      - name: Publicar APK para download (ZIP do GitHub Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: minha-medicacao-pr9-android-debug
+          path: |
+            minha-medicacao-pr9-debug.apk
+            minha-medicacao-pr9-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  apk-release:
+    name: Disponibilizar APK debug (pré-release)
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 9 &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: apk-debug
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # Sem checkout e sem executar dependências de projeto neste job com
+      # permissão de publicação; apenas baixar o artefato do job isolado.
+      - name: Recuperar APK gerado
+        uses: actions/download-artifact@v4
+        with:
+          name: minha-medicacao-pr9-android-debug
+          path: release-files
+      - name: Verificar hash do APK
+        run: |
+          set -euo pipefail
+          cd release-files
+          sha256sum -c minha-medicacao-pr9-debug.apk.sha256
+          test -s minha-medicacao-pr9-debug.apk
+      - name: Criar pré-release com download direto
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          tag="android-pr9-debug-${SOURCE_SHA:0:12}"
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$tag" release-files/minha-medicacao-pr9-debug.apk release-files/minha-medicacao-pr9-debug.apk.sha256 --clobber --repo "$GH_REPO"
+          else
+            gh release create "$tag" release-files/minha-medicacao-pr9-debug.apk release-files/minha-medicacao-pr9-debug.apk.sha256 \
+              --repo "$GH_REPO" \
+              --target "$SOURCE_SHA" \
+              --title "Minha Medicação — Android PR #9 (APK debug de teste)" \
+              --prerelease \
+              --notes "APK de teste compilado automaticamente a partir do PR #9. Assinado com chave debug do CI; não é uma publicação na Play Store. Requer validação de notificações no aparelho e pode não atualizar instalações assinadas com outra chave. SHA-256 acompanha o arquivo."
+          fi
+          gh release view "$tag" --repo "$GH_REPO" --json tagName,assets,url

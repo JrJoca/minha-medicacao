@@ -33,6 +33,27 @@ automaticamente. O comportamento deve ser verificado em dispositivo físico.
 - A agenda é reconstruída em login, mudança de rotina, retorno ao app e foco.
   Sair da conta remove lembretes gerenciados pelo usuário anterior.
 
+## Cancelamento de rotinas pausadas e tratamentos concluídos (reforço)
+
+- Ao confirmar **Pausar** ou **Arquivar** no servidor, o Android tenta cancelar
+  imediatamente os avisos futuros e remove da bandeja os avisos já entregues da
+  rotina. Uma falha de cancelamento é apresentada na interface, e uma nova
+  sincronização é tentada ao reabrir/retomar o aplicativo.
+- A sincronização calcula apenas notificações de rotinas ativas, não arquivadas
+  e com `reminders_enabled` diferente de `false`. Os IDs antigos de
+  tratamentos encerrados são removidos por reconciliação, sem apagar avisos de
+  outras rotinas ou funcionalidades do sistema.
+- A data `endDate` é **inclusiva**: no último dia ainda há lembretes nos
+  horários definidos, mas nenhum agendamento depois dele. A agenda é
+  revalidada quando a data local muda, além da abertura e retomada do app.
+- **Rotinas legadas sem data explícita de início/fim:** o sistema não presume
+  encerramento clínico a partir de `current_day` ou da data de cadastro.
+  Para cessar os alertas, pause/arquive a rotina ou configure um calendário
+  estruturado com `endDate` após verificar a prescrição.
+- Ações feitas em outro dispositivo não podem cancelar alarmes nativos de um
+  celular Android que permanece fechado ou offline. O cancelamento nesse
+  dispositivo depende de sua próxima sincronização.
+
 ## Limitações importantes
 
 1. **Horizonte de datas específicas:** até 120 dias civis a partir da

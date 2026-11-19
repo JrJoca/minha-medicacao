@@ -21,6 +21,7 @@ export type NotificationRoutine = {
   time: string;
   limit: string;
   paused: boolean;
+  remindersEnabled?: boolean;
   archivedAt?: string | null;
   frequencyKind?: "daily" | "other" | null;
   recurrenceRule?: RecurrenceRule | null;
@@ -121,7 +122,7 @@ export function buildNotificationPlan(
   let skipped = 0;
 
   for (const routine of routines) {
-    if (routine.paused || routine.archivedAt) continue;
+    if (routine.paused || routine.archivedAt || routine.remindersEnabled === false) continue;
     const reminder = timeParts(routine.time);
     const deadline = timeParts(routine.limit);
     if (!reminder || !deadline) { skipped++; continue; }
@@ -148,6 +149,9 @@ export function buildNotificationPlan(
       const timezone = routine.recurrenceTimezone;
       if (!timezone) { skipped++; continue; }
       const today = dateKeyInTimezone(now, timezone);
+      // Fim inclusivo: no dia seguinte não pode restar agendamento ativo.
+      // O cancelamento de lembretes antigos acontece na reconciliação nativa.
+      if (rule.endDate && today > rule.endDate) continue;
       // Uma regra sem fim, já iniciada e no fuso do aparelho pode ficar
       // repetindo no próprio SO, sem precisar abrir o app para renovação.
       const nativeRepeat =
@@ -237,7 +241,71 @@ export function isMedicationNotification(
   const extra = pending.extra;
   if (!extra || typeof extra !== "object") return false;
   const obj = extra as Record<string, unknown>;
-  return obj.app === "minha-medicacao" ||
-    (typeof obj.routineId === "string" &&
-      (obj.kind === "reminder" || obj.kind === "deadline"));
+  // Só os dois tipos de lembrete de ROTINA são administrados aqui.
+  // Não remover notificações de outros módulos mesmo que tenham o app marker.
+  if (typeof obj.routineId !== "string" ||
+      (obj.kind !== "reminder" && obj.kind !== "deadline")) {
+    return false;
+  }
+  // A versão antiga não possuía "app"; identificadores de terceiros não são nossos.
+  return obj.app === undefined || obj.app === null || obj.app === "minha-medicacao";
+}
+
+
+/**
+ * Identifica notificações de uma rotina, incluindo as produzidas pelo APK
+ * antigo. Nunca assume que toda notificação do dispositivo é nossa.
+ */
+export function isRoutineMedicationNotification(
+  notification: { extra?: unknown },
+  routineId: string,
+): boolean {
+  if (!isMedicationNotification(notification)) return false;
+  const extra = notification.extra as Record<string, unknown>;
+  return extra.routineId === routineId;
+}
+
+export type PendingMedicationNotification = {
+  id: number;
+  extra?: unknown;
+};
+
+/**
+ * Planeja alterações sem efeitos colaterais para facilitar auditoria.
+ * Notificações gerenciadas de rotinas pausadas, encerradas, arquivadas ou
+ * removidas são obsoletas e devem ser canceladas ANTES de novas agendas.
+ * Itens de outros recursos permanecem intocados.
+ */
+export function reconcileMedicationNotifications(
+  pending: PendingMedicationNotification[],
+  desired: PlannedNotification[],
+): { obsolete: { id: number }[]; next: PlannedNotification[]; kept: number } {
+  const desiredById = new Map(desired.map(notification => [notification.id, notification]));
+  const keptIds = new Set<number>();
+  const obsoleteIds = new Set<number>();
+  for (const item of pending) {
+    if (!isMedicationNotification(item)) continue;
+    const target = desiredById.get(item.id);
+    const extra = item.extra;
+    const meta = extra && typeof extra === "object"
+      ? extra as Record<string, unknown> : null;
+    if (
+      target &&
+      meta?.app === "minha-medicacao" &&
+      meta?.version === 2 &&
+      meta?.signature === target.extra.signature &&
+      meta?.routineId === target.extra.routineId &&
+      meta?.kind === target.extra.kind &&
+      !keptIds.has(item.id)
+    ) {
+      keptIds.add(item.id);
+    } else {
+      obsoleteIds.add(item.id);
+    }
+  }
+  return {
+    obsolete: [...obsoleteIds].map(id => ({ id })),
+    next: desired.filter(notification => !keptIds.has(notification.id)),
+    kept: keptIds.size,
+  };
 }

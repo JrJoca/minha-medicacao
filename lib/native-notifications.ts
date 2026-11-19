@@ -3,6 +3,8 @@ import { LocalNotifications } from "@capacitor/local-notifications";
 import {
   buildNotificationPlan,
   isMedicationNotification,
+  isRoutineMedicationNotification,
+  reconcileMedicationNotifications,
   type NotificationRoutine,
 } from "./notification-schedule";
 
@@ -33,6 +35,27 @@ async function clearPending() {
   const pending = await pendingMedicationNotifications();
   if (!pending.length) return;
   await LocalNotifications.cancel({ notifications: pending.map(({ id }) => ({ id })) });
+}
+
+/** Cancela imediatamente alarmes pendentes e notificações entregues da rotina. */
+export function cancelRoutineNotifications(routineId: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return Promise.resolve();
+  if (!routineId) return Promise.reject(new TypeError("Rotina inválida."));
+  return serialized(async () => {
+    const pending = await pendingMedicationNotifications();
+    const obsolete = pending
+      .filter(item => isRoutineMedicationNotification(item, routineId))
+      .map(item => ({ id: item.id }));
+    if (obsolete.length) await LocalNotifications.cancel({ notifications: obsolete });
+
+    const delivered = await LocalNotifications.getDeliveredNotifications();
+    const ids = delivered.notifications
+      .filter(item => isRoutineMedicationNotification({
+        extra: item.extra ?? item.data,
+      }, routineId))
+      .map(item => item.id);
+    if (ids.length) await LocalNotifications.removeDeliveredNotificationsById({ ids });
+  });
 }
 
 /** Cancela apenas lembretes desta aplicação, inclusive os da versão anterior. */
@@ -77,29 +100,11 @@ export function syncRoutineNotifications(routines: NotificationRoutine[]): Promi
 
     const plan = buildNotificationPlan(routines);
     const pending = await pendingMedicationNotifications();
-    const desired = new Map(plan.notifications.map(notification => [notification.id, notification]));
-    const kept = new Set<number>();
-    const obsolete: { id: number }[] = [];
-
-    for (const item of pending) {
-      const target = desired.get(item.id);
-      const extra = item.extra as Record<string, unknown> | null | undefined;
-      if (
-        target &&
-        extra?.app === "minha-medicacao" &&
-        extra?.version === 2 &&
-        extra?.signature === target.extra.signature &&
-        !kept.has(item.id)
-      ) {
-        kept.add(item.id);
-      } else {
-        obsolete.push({ id: item.id });
-      }
-    }
+    const { obsolete, next } = reconcileMedicationNotifications(pending, plan.notifications);
 
     // Cancelamento ANTES dos novos disparos: não dispara nas datas antigas.
+    // Isso remove alarmes de rotinas pausadas/arquivadas e tratamentos encerrados.
     if (obsolete.length) await LocalNotifications.cancel({ notifications: obsolete });
-    const next = plan.notifications.filter(notification => !kept.has(notification.id));
 
     // Em Android 12+, falta de permissão exata usa alarme inexato de maneira
     // explícita, sem navegar à configuração do sistema em cada retomada.

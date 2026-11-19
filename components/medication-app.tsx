@@ -50,7 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getBackend, getPasswordAuth, loginEmail, resolveApplicationUser, type ApplicationUser } from "@/lib/neon";
-import { clearRoutineNotifications, syncRoutineNotifications } from "@/lib/native-notifications";
+import { cancelRoutineNotifications, clearRoutineNotifications, syncRoutineNotifications } from "@/lib/native-notifications";
 import { parseQuantity, unitLabel, type QuantityUnit, type RoutineDose } from "@/lib/inventory";
 import { dashboardClock } from "@/lib/dashboard-clock";
 import { addCalendarDays, isScheduledOn, validateRecurrence, type RecurrenceRule, type Weekday } from "@/lib/recurrence";
@@ -87,6 +87,7 @@ type Routine = {
   taken: boolean;
   takenAt: string | null;
   paused: boolean;
+  remindersEnabled: boolean;
 };
 
 const initialMedicines: Medicine[] = [];
@@ -327,7 +328,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
         period: r.period_description, durationValue: r.duration_value,
         durationUnit: r.duration_unit, noEndDate: r.has_no_end_date,
         currentDay: r.current_day, totalDays: r.total_days,
-        taken: false, takenAt: null as string | null, paused: r.status === "paused",
+        taken: false, takenAt: null as string | null, paused: r.status === "paused", remindersEnabled: r.reminders_enabled ?? true,
       }));
       setRoutines(previous => baseRoutines.map(r => {
         const existing = previous.find(old => old.id === r.id);
@@ -499,7 +500,7 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [user, dataLoading, routineLoading, routineLoadError, routineDetailsError, routines]);
+  }, [user, dataLoading, routineLoading, routineLoadError, routineDetailsError, routines, clock.dayKey]);
 
   async function loadReport(dateKey: string) {
     const revision = authRevision.current;
@@ -1063,12 +1064,25 @@ export default function MedicationApp({view = "routines"}: {view?: "routines" | 
     setRoutines((list) =>
       list.map((r) => (r.id === id ? { ...r, paused } : r)),
     );
+    if (paused) {
+      // Não depender da próxima leitura do backend para remover alarmes antigos.
+      void cancelRoutineNotifications(id).catch(() => {
+        setNotificationWarning("Não foi possível cancelar os lembretes desta rotina. Abra o aplicativo novamente para sincronizar.");
+      });
+    }
     setInventoryRevision(v=>v+1);
   }
   async function remove(id: string) {
     if (viewerMutationBlocked()) return;
     const {error}=await getBackend().rpc("archive_medication_routine",{p_routine_id:id});
     if (error) {setNotice("Erro ao arquivar rotina: "+error.message);return;}
+    // Se a consulta posterior falhar, manter a rotina desativada localmente.
+    setRoutines(list => list.map(r => r.id === id
+      ? { ...r, paused: true, archivedAt: new Date().toISOString() }
+      : r));
+    void cancelRoutineNotifications(id).catch(() => {
+      setNotificationWarning("Não foi possível cancelar os lembretes arquivados. Abra o aplicativo novamente para sincronizar.");
+    });
     await loadData();setInventoryRevision(v=>v+1);
     setNotice("Rotina arquivada. As tomadas e movimentações anteriores foram preservadas.");
   }
