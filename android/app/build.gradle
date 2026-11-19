@@ -17,6 +17,12 @@ android {
         }
     }
     buildTypes {
+        // APKs debug do CI são assinados com chaves efêmeras por runner.
+        // Um appId separado permite instalar/testar sem desinstalar o APK anterior.
+        debug {
+            applicationIdSuffix ".teste"
+            versionNameSuffix "-teste"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
