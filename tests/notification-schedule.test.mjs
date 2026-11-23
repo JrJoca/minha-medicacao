@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   buildNotificationPlan,
   isMedicationNotification,
+  isRoutineMedicationNotification,
+  reconcileMedicationNotifications,
   MAX_PENDING_NOTIFICATIONS,
 } from "../lib/notification-schedule.ts";
 
@@ -157,7 +159,9 @@ test("limite de agendamentos preserva os próximos eventos e sinaliza truncament
 });
 
 test("não cancela notificações de outros recursos e identifica notificações antigas do app", () => {
-  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", version: 2 } }), true);
+  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", version: 2 } }), false);
+  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", routineId: "r1", kind: "reminder", version: 2 } }), true);
+  assert.equal(isMedicationNotification({ extra: { app: "minha-medicacao", category: "other-feature" } }), false);
   assert.equal(isMedicationNotification({ extra: { routineId: "r1", kind: "deadline" } }), true);
   assert.equal(isMedicationNotification({ extra: { other: true } }), false);
   assert.equal(isMedicationNotification({ extra: null }), false);
@@ -172,4 +176,107 @@ test("recusa horas inválidas e timezone desconhecido sem agendar alertas diári
   ]);
   assert.equal(p.notifications.length, 0);
   assert.equal(p.skipped, 3);
+});
+
+
+test("pausar uma rotina cancela os lembretes que já estavam agendados", () => {
+  const r = routine({
+    id: "pause-test",
+    recurrenceRule: {kind: "weekdays", startDate: "2026-11-16", weekdays: [2, 4]},
+    recurrenceTimezone: "America/Sao_Paulo",
+  });
+  const before = planned([r]);
+  assert.equal(before.notifications.length, 4);
+  const after = planned([{...r, paused: true}]);
+  assert.equal(after.notifications.length, 0);
+  const changes = reconcileMedicationNotifications(before.notifications, after.notifications);
+  assert.deepEqual(changes.obsolete.map(x => x.id).sort(), before.notifications.map(x => x.id).sort());
+  assert.equal(changes.next.length, 0);
+  assert.equal(changes.kept, 0);
+});
+
+test("retomar uma rotina ativa recria apenas os lembretes futuros", () => {
+  const r = routine({id: "resume-test"});
+  const stopped = planned([{...r, paused: true}]);
+  const resumed = planned([r]);
+  const changes = reconcileMedicationNotifications(stopped.notifications, resumed.notifications);
+  assert.equal(changes.obsolete.length, 0);
+  assert.equal(changes.next.length, 2);
+  assert.deepEqual(changes.next.map(x => x.id), resumed.notifications.map(x => x.id));
+});
+
+test("tratamento encerrado remove inclusive repetições que já estavam agendadas", () => {
+  const r = routine({
+    id: "ended-test",
+    recurrenceRule: {kind: "daily", startDate: "2026-11-01"},
+    recurrenceTimezone: "America/Sao_Paulo",
+  });
+  const before = planned([r]);
+  assert.equal(before.notifications.length, 2);
+  const after = planned([{...r, recurrenceRule: {
+    kind: "daily", startDate: "2026-11-01", endDate: "2026-11-16",
+  }}]);
+  assert.equal(after.notifications.length, 0);
+  const changes = reconcileMedicationNotifications(before.notifications, after.notifications);
+  assert.deepEqual(changes.obsolete.map(n=>n.id).sort(), before.notifications.map(n=>n.id).sort());
+  assert.equal(changes.next.length, 0);
+});
+
+test("tratamento com fim hoje não agenda amanhã nem repete indefinidamente", () => {
+  const r = routine({
+    id: "last-day-test", time: "18:00", limit: "19:00",
+    recurrenceRule: {kind: "daily", startDate: "2026-11-01", endDate: "2026-11-17"},
+    recurrenceTimezone: "America/Sao_Paulo",
+  });
+  const today = planned([r]);
+  assert.equal(today.notifications.length, 2);
+  assert.ok(today.notifications.every(n=>n.schedule.at && !n.schedule.repeats));
+  const tomorrow = planned([r], new Date("2026-11-18T15:00:00Z"));
+  assert.equal(tomorrow.notifications.length, 0);
+  assert.equal(reconcileMedicationNotifications(today.notifications, tomorrow.notifications).obsolete.length, 2);
+});
+
+test("pausar uma rotina não cancela alarmes de outras rotinas nem de outros recursos", () => {
+  const paused = routine({id: "paused-only"});
+  const healthy = routine({
+    id: "healthy-schedule",
+    recurrenceRule: {kind: "interval", startDate: "2026-11-16", everyDays: 2},
+    recurrenceTimezone: "America/Sao_Paulo",
+  });
+  const pending = [
+    ...planned([paused, healthy]).notifications,
+    {id: 11223344, extra: {app: "other-app", routineId: "paused-only"}},
+  ];
+  const after = planned([{...paused,paused:true},healthy]);
+  const changes = reconcileMedicationNotifications(pending, after.notifications);
+  const oldPausedIds = planned([paused]).notifications.map(x=>x.id);
+  assert.deepEqual(changes.obsolete.map(x=>x.id).sort(), oldPausedIds.sort());
+  // O limite da fila redistribui vagas liberadas pela pausa para eventos
+  // futuros da rotina que continua ativa. Eles devem ser agendados agora.
+  assert.equal(changes.kept + changes.next.length, after.notifications.length);
+  assert.ok(changes.next.every(n => n.extra.routineId === "healthy-schedule"));
+});
+
+test("arquivamento e desativação de lembretes retiram eventos anteriores da fila", () => {
+  const r=routine({id:"archive-test"});
+  const old=planned([r]);
+  for (const updated of [{...r,archivedAt:"2026-11-17T13:00:00Z"}, {...r,remindersEnabled:false}]) {
+    const newPlan=planned([updated]);
+    assert.equal(newPlan.notifications.length,0);
+    assert.equal(reconcileMedicationNotifications(old.notifications,newPlan.notifications).obsolete.length,2);
+  }
+});
+
+test("reconciliação preserva notificações de outros recursos e remove versões antigas", () => {
+  const r=routine({id:"compat"});
+  const plan=planned([r]);
+  const old={id:98765,extra:{routineId:"compat",kind:"reminder"}};
+  const foreign={id:34567,extra:{app:"other-product",routineId:"compat",kind:"reminder"}};
+  const changes=reconcileMedicationNotifications([old,foreign,...plan.notifications],plan.notifications);
+  assert.deepEqual(changes.obsolete,[{id:98765}]);
+  assert.equal(changes.kept,2);
+  assert.equal(changes.next.length,0);
+  assert.equal(isRoutineMedicationNotification(old,"compat"),true);
+  assert.equal(isRoutineMedicationNotification(foreign,"compat"),false);
+  assert.equal(isRoutineMedicationNotification(plan.notifications[0],"other"),false);
 });
