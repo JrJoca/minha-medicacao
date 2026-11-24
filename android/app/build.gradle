@@ -20,7 +20,11 @@ android {
         // APKs debug do CI são assinados com chaves efêmeras por runner.
         // Um appId separado permite instalar/testar sem desinstalar o APK anterior.
         debug {
-            applicationIdSuffix ".teste"
+            // Somente para APK de testes de instalação limpa, compilado com
+            // -PcleanInstall=true. Mantenha o sufixo de testes nos demais builds.
+            if (!project.hasProperty("cleanInstall") || project.property("cleanInstall") != "true") {
+                applicationIdSuffix ".teste"
+            }
             versionNameSuffix "-teste"
         }
         release {
