@@ -1,0 +1,122 @@
+name: APK Android — instalação limpa
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build-clean-install:
+    if: github.event.pull_request.number == 10 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Somente URLs de cliente públicas. Nunca colocar segredos no APK.
+      VITE_NEON_AUTH_URL: https://ep-late-water-b53akznr.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth
+      VITE_NEON_DATA_API_URL: https://ep-late-water-b53akznr.apirest.c-7.us-east-2.aws.neon.tech/neondb/rest/v1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/app/*.gradle*
+            android/gradle/wrapper/gradle-wrapper.properties
+      - name: Instalar dependências imutáveis
+        run: pnpm install --frozen-lockfile
+      - name: Testar calendário, notificações e estoque
+        run: |
+          node --experimental-strip-types --test tests/recurrence.test.mjs
+          pnpm test:notifications
+          pnpm test:medication-control
+      - name: Validar TypeScript e lint
+        run: |
+          pnpm exec tsc --noEmit
+          pnpm lint
+      - name: Compilar frontend e sincronizar Capacitor
+        run: pnpm android:sync
+      - name: Validar endpoints públicos e origem Android
+        run: |
+          set -euo pipefail
+          assets=android/app/src/main/assets/public
+          test -d "$assets"
+          grep -R -F -q -- "$VITE_NEON_AUTH_URL" "$assets" || { echo "::error::Neon Auth ausente do APK"; exit 1; }
+          grep -R -F -q -- "$VITE_NEON_DATA_API_URL" "$assets" || { echo "::error::Neon Data API ausente do APK"; exit 1; }
+          grep -F -q 'androidScheme: "https"' capacitor.config.ts || exit 1
+          grep -F -q 'hostname: "localhost"' capacitor.config.ts || exit 1
+      - name: Gerar APK de instalação limpa com assinatura de DEBUG
+        run: |
+          cd android
+          bash ./gradlew --no-daemon --stacktrace -PcleanInstall=true assembleDebug
+      - name: Verificar instalabilidade, identificador e assinatura do APK
+        run: |
+          set -euo pipefail
+          src=android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$src"
+          aapt="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name aapt -type f | sort -V | tail -n1)"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner -type f | sort -V | tail -n1)"
+          test -x "$aapt" && test -x "$apksigner"
+          pkg="$("$aapt" dump badging "$src" | sed -n "s/package: name='\([^']*\)'.*/\1/p" | head -n1)"
+          echo "Identificador do aplicativo: $pkg"
+          test "$pkg" = "br.com.joaquimkurama.minhamedicacao"
+          "$apksigner" verify --verbose "$src"
+          "$apksigner" verify --print-certs "$src" | head -n 8
+          cp "$src" minha-medicacao-android-clean-install-debug.apk
+          sha256sum minha-medicacao-android-clean-install-debug.apk > minha-medicacao-android-clean-install-debug.apk.sha256
+          sha256sum -c minha-medicacao-android-clean-install-debug.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minha-medicacao-android-clean-install-debug
+          path: |
+            minha-medicacao-android-clean-install-debug.apk
+            minha-medicacao-android-clean-install-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-test-apk:
+    if: github.event.pull_request.number == 10 && github.event.pull_request.head.repo.full_name == github.repository
+    needs: build-clean-install
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: minha-medicacao-android-clean-install-debug
+          path: release-files
+      - name: Verificar integridade do APK
+        run: |
+          set -euo pipefail
+          cd release-files
+          sha256sum -c minha-medicacao-android-clean-install-debug.apk.sha256
+      - name: Publicar pré-release (somente testes, não oficial)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          tag="android-clean-install-debug-${SOURCE_SHA:0:12}"
+          gh release create "$tag" \
+            release-files/minha-medicacao-android-clean-install-debug.apk \
+            release-files/minha-medicacao-android-clean-install-debug.apk.sha256 \
+            --repo "$GH_REPO" --target "$SOURCE_SHA" \
+            --title "Minha Medicação — Instalação limpa (APK de testes)" \
+            --prerelease \
+            --notes "APK do código atual da master com identificador br.com.joaquimkurama.minhamedicacao. Assinatura DEBUG efêmera: NÃO é uma versão oficial assinada com chave de distribuição. Para instalação limpa, confirme sincronização dos seus registros, desinstale versão antiga com mesmo pacote e depois instale o arquivo. Para uma release oficial é necessária uma chave de assinatura persistente. O arquivo SHA-256 acompanha o APK."
